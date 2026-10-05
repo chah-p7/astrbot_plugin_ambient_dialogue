@@ -15,7 +15,7 @@ KINDS = PROTECTED | {'address', 'preference', 'fact'}
 
 
 class Store:
-    """One physical database per native platform/account/group, with no raw conversation log.
+    """One physical database per native group, with bounded, expiring raw cache.
 
     Summary entries retain stable fact IDs so correction/deletion also removes
     compressed copies. A transaction owns summary replacement and source purge;
@@ -289,8 +289,12 @@ class Store:
     def load_raw(self, *, now):
         with self.connection() as db:
             self._trim_raw(db, now)
-            return [json.loads(r[0]) for r in db.execute(
+            changed = db.total_changes
+            rows = [json.loads(r[0]) for r in db.execute(
                 'SELECT payload FROM raw_messages ORDER BY at,id')]
+        if changed:
+            self._vacuum()
+        return rows
 
     def snapshot(self, member=None):
         with self.connection() as db:

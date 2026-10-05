@@ -109,11 +109,14 @@ class Runtime:
         store, window = await self.ensure(route)
         status = 'none'
         item = candidate(row['text'], store.policy.fact_chars)
-        if item:
-            try:
-                member = await asyncio.to_thread(store.identify, route.platform, row['sender'], row['name'])
+        try:
+            # Actual interaction refreshes only the short card; passive capture
+            # never creates a profile or infers any personal facts.
+            member = await asyncio.to_thread(store.identify, route.platform, row['sender'], row['name'])
+            if item:
                 status = await asyncio.to_thread(store.enqueue, member, item, row['id'])
-            except ValueError:
+        except ValueError:
+            if item:
                 status = 'not_saved_storage_full_or_invalid'
         snap = await asyncio.to_thread(store.snapshot)
         return build_pack(window, snap, row, now=time.time(), memory_status=status)

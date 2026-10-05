@@ -1,6 +1,10 @@
 {
   "files": [
     {
+      "path": ".gitattributes",
+      "sha256": "d60f352d0db1404c70afb4bb8b2ca3fd1c610572aa40720e8a0b7baa7885418c"
+    },
+    {
       "path": ".github/workflows/tests.yml",
       "sha256": "cef2a4678be6b9baacea81242ce6eadd1b50ba8a9b60b27542fc7bb7f170a582"
     },
@@ -30,11 +34,11 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "c23e4d374a8fa40a7c1107267e596f19b11bb143dbf44db277b5a75ba4b429d9"
+      "sha256": "44b1b723096050bea6e5425e278b960e3a74b875afe228614be66ebc04eb3d88"
     },
     {
       "path": "ambient/store.py",
-      "sha256": "1063a7ba93a71cc787929689f577759a8dc41d4903e1f11f6af17b7683f902d8"
+      "sha256": "5663f179bebcf16293ad6a8a7772c6e16a928b81e2c46ea4135933e3ef57e902"
     },
     {
       "path": "ambient/transport.py",
@@ -58,7 +62,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "773ffecf88b12211d85b3545e4d4d8627f4cb1295fcf439ece5b27adec2c2f08"
+      "sha256": "3a3cd370b02bb4ee553919ecb466db3341c5683800e8b78df69e9daecb75e4c4"
     },
     {
       "path": "requirements.txt",
@@ -66,7 +70,7 @@
     },
     {
       "path": "tests/test_ambient.py",
-      "sha256": "9c945eef8798093d905370312f22cadf12e6d2c69489e264184d4b625e884ccc"
+      "sha256": "664761f0e63c9109e7b79e0261e23512080aaf37484180b87807366c7abeeacb"
     },
     {
       "path": "tests/test_native.py",

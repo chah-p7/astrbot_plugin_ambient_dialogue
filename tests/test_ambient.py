@@ -78,10 +78,12 @@ class AmbientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_scoping_nickname_and_only_explicit_memory(self):
         await self.rt.observe(self.event)
-        req = request()
-        await self.rt.inject(self.event, req, Part)
         store, _ = await self.rt.ensure(self.route)
         self.assertEqual([], store.snapshot()['members'])
+        req = request()
+        await self.rt.inject(self.event, req, Part)
+        self.assertEqual(1, len(store.snapshot()['members']))
+        self.assertEqual([], store.snapshot()['facts'])
         self.event = Event('请记住我的偏好：饮料=白水', mid='m2')
         await self.rt.inject(self.event, request(), Part)
         member = store.snapshot()['members'][0]['id']
@@ -290,6 +292,13 @@ class StorageTests(unittest.TestCase):
         self.store.policy = replace(self.store.policy, raw_hours=0)
         self.store.append_raw({'id':'raw','at':1000,'text':'原话'}, now=1000)
         self.assertEqual([], self.store.load_raw(now=1000))
+
+    def test_restart_ttl_also_reclaims_physical_space(self):
+        for i in range(80):
+            self.store.append_raw({'id':str(i),'at':1000,'text':'old text'*500}, now=1000)
+        before = self.store.size()
+        self.assertEqual([], self.store.load_raw(now=30000))
+        self.assertLess(self.store.size(), before)
 
 
 class MigrationTests(unittest.TestCase):
