@@ -1,0 +1,84 @@
+{
+  "files": [
+    {
+      "path": ".github/workflows/tests.yml",
+      "sha256": "cef2a4678be6b9baacea81242ce6eadd1b50ba8a9b60b27542fc7bb7f170a582"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "6849c90534de6eddad47879bae32a2244f2a5fe63bb141a69ad7f4295d8e57a3"
+    },
+    {
+      "path": "_conf_schema.json",
+      "sha256": "dbc1223afc5892ff6bde7f71b7c03a3dc7237b8f7a04dfa987ecac2449e1e054"
+    },
+    {
+      "path": "ambient/__init__.py",
+      "sha256": "83edcd3b749ba04a5da0917ec6ff7e09c5a158b089e713714a87020713e24a84"
+    },
+    {
+      "path": "ambient/context.py",
+      "sha256": "5674ce15ea9a62c3b09045f6f07b15800322e6e51c04520ca53137a1cfd976c4"
+    },
+    {
+      "path": "ambient/interjection.py",
+      "sha256": "0892a5f7f1b8aa9fcc66e9036f13db2c91db838840479382622ca6ae578f668f"
+    },
+    {
+      "path": "ambient/policy.py",
+      "sha256": "6663ce8947ea4a8b0ccc862c941b93164e5737a290c1fdd473f2709d712a8fbf"
+    },
+    {
+      "path": "ambient/runtime.py",
+      "sha256": "c23e4d374a8fa40a7c1107267e596f19b11bb143dbf44db277b5a75ba4b429d9"
+    },
+    {
+      "path": "ambient/store.py",
+      "sha256": "1063a7ba93a71cc787929689f577759a8dc41d4903e1f11f6af17b7683f902d8"
+    },
+    {
+      "path": "ambient/transport.py",
+      "sha256": "997464bb2c114cd43ec2de4217237bb31a1d083005610438d688c3b060b1a97a"
+    },
+    {
+      "path": "docs/MIGRATION.md",
+      "sha256": "ce26be219c3b2f2f3e446e780bd26af723a5e5b43964205da28c388d5620248a"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "f440d399276dcbd8a845dee6e873a54c1f59ff44b502b45f3bc9352224ed5789"
+    },
+    {
+      "path": "main.py",
+      "sha256": "887cbb293235e09dcd8ecb89e92914d2bfd113c58423918cad1d1386256f2ac5"
+    },
+    {
+      "path": "metadata.yaml",
+      "sha256": "2cbee73819ff4fef1e0e0a0a091d1c5a6e62c9f962d3ca6e994021a589d3a5b8"
+    },
+    {
+      "path": "README.md",
+      "sha256": "773ffecf88b12211d85b3545e4d4d8627f4cb1295fcf439ece5b27adec2c2f08"
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "c2afbe5d378037bcd112a137227645306fc74f0d1e666281a2572675c87abb6e"
+    },
+    {
+      "path": "tests/test_ambient.py",
+      "sha256": "9c945eef8798093d905370312f22cadf12e6d2c69489e264184d4b625e884ccc"
+    },
+    {
+      "path": "tests/test_native.py",
+      "sha256": "aeaed8888d191ad68400e049cd742ba7a7d58ca8340537845a810ddc36698516"
+    },
+    {
+      "path": "tools/build_schema.py",
+      "sha256": "a003bd896c6960341fbf7d36a5e277578f363f4f747def8819a2ec9893ee6852"
+    },
+    {
+      "path": "tools/migrate_light.py",
+      "sha256": "76fd07ad9f40c16ca6568204277f67a6ef42d41f953fdb920a758da0129254a2"
+    }
+  ]
+}
