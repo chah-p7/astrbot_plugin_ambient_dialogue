@@ -11,12 +11,13 @@ import tempfile
 import textwrap
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ambient.runtime import Runtime
 from ambient.transport import Transport
 from ambient.context import route_for
+from ambient.host import route_send_tool
 from test_ambient import Event, context
 
 
@@ -27,6 +28,7 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints, CheckpointMessageSegment, CheckpointData
         from astrbot.core.provider.entities import ProviderRequest, LLMResponse
         ctx, event = context(), Event()
+        event.is_at_or_wake_command = True
         with tempfile.TemporaryDirectory() as tmp:
             rt = Runtime(tmp, ctx, {'groups':[{'umo':event.unified_msg_origin,'capture_only':False}]})
             try:
@@ -41,6 +43,12 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
                 saved = dump_messages_with_checkpoints([message])
                 self.assertNotIn('ambient_data', json.dumps(saved,ensure_ascii=False))
                 self.assertIn('还能玩吗', json.dumps(saved,ensure_ascii=False))
+                from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+                runner = ToolLoopAgentRunner()
+                await runner.reset(provider=NS(provider_config={'id':'synthetic'}), request=req,
+                                   run_context=NS(messages=[]), tool_executor=NS(), agent_hooks=NS())
+                self.assertEqual(['system','user'], [m.role for m in runner.run_context.messages])
+                self.assertIn('刚刚输了三把', str(runner.run_context.messages))
                 # Execute the exact deployed history method, without starting a bot.
                 path = Path(astrbot.__file__).parent/'core/pipeline/process_stage/method/agent_sub_stages/internal.py'
                 source = path.read_text(encoding='utf-8')
@@ -53,9 +61,7 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
                 await env['_save_to_history'](NS(conv_manager=manager),event,req,
                     LLMResponse(role='assistant',completion_text='还能玩'),
                     [Message(role='system',content=req.system_prompt),message,Message(role='assistant',content='还能玩')],None)
-                history = manager.update_conversation.call_args.kwargs['history']
-                self.assertNotIn('ambient_data', json.dumps(history))
-                self.assertEqual('conversation', manager.update_conversation.call_args.args[1])
+                manager.update_conversation.assert_not_awaited()
             finally:
                 await rt.close()
 
@@ -102,6 +108,79 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('m1',call['json']['msg_id'])
         self.assertGreater(call['json']['msg_seq'],10000)
         guard.assert_awaited_once()
+
+    async def test_normal_reply_uses_real_transport_and_shared_context(self):
+        from astrbot.core.agent.message import TextPart
+        from astrbot.core.provider.entities import ProviderRequest, LLMResponse
+        from astrbot.core.message.message_event_result import MessageChain
+        self.event.is_at_or_wake_command = True
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, {'groups':[{'umo': self.route.umo, 'capture_only':False}]})
+            try:
+                req = ProviderRequest(prompt='测试', contexts=[{'role':'assistant','content':'旧的扣1规则'}])
+                await rt.inject(self.event, req, TextPart)
+                await rt.response(self.event, LLMResponse(role='assistant', completion_text='新话题的回复'))
+                result = await self.event.send(message=MessageChain().message('新话题的回复'))
+                self.assertEqual({'id':'native-receipt'}, result)
+                self.assertEqual(1, len(self.calls))
+                self.assertEqual('m1', self.calls[0]['json']['msg_id'])
+                row = list(rt.windows[self.route.key].rows)[-1]
+                self.assertEqual(('reply', True, '新话题的回复'), (row['source'], row['self'], row['text']))
+                self.assertEqual([], req.contexts)
+                # Native duplicate decoration cannot cause a second API call.
+                await self.event.send(MessageChain().message('新话题的回复'))
+                self.assertEqual(1, len(self.calls))
+            finally:
+                await rt.close()
+
+    async def test_host_followups_do_not_bypass_context_gate(self):
+        from astrbot.core.pipeline.process_stage.follow_up import _ACTIVE_AGENT_RUNNERS, try_capture_follow_up
+        runner = NS(follow_up=Mock(), run_context=NS(context=NS(event=self.event)))
+        _ACTIVE_AGENT_RUNNERS[self.event.unified_msg_origin] = runner
+        try:
+            Runtime.isolate_followups(self.event)
+            self.assertIsNone(try_capture_follow_up(self.event))
+        finally:
+            _ACTIVE_AGENT_RUNNERS.pop(self.event.unified_msg_origin, None)
+
+    async def test_stream_fragments_cannot_bypass_alias_guard(self):
+        from astrbot.core.agent.message import TextPart
+        from astrbot.core.provider.entities import ProviderRequest
+        from astrbot.core.message.message_event_result import MessageChain
+        self.event.is_at_or_wake_command = True
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, {'groups':[{'umo': self.route.umo, 'capture_only':False}]})
+            try:
+                await rt.inject(self.event, ProviderRequest(prompt='测试'), TextPart)
+                async def fragments(*texts):
+                    for text in texts: yield MessageChain().message(text)
+                await self.event.send_streaming(fragments('u', '1别闹了'))
+                self.assertEqual([], self.calls)
+                await self.event.send_streaming(fragments('正常', '回答'))
+                self.assertEqual('正常回答', self.calls[0]['json']['content'])
+            finally:
+                await rt.close()
+
+    async def test_builtin_message_tool_uses_event_transport_without_global_change(self):
+        from astrbot.core.agent.tool import ToolSet
+        from astrbot.core.provider.entities import ProviderRequest
+        from astrbot.core.tools.message_tools import SendMessageToUserTool
+        original = SendMessageToUserTool()
+        tools = ToolSet(tools=[original])
+        req = ProviderRequest(func_tool=tools)
+        self.event.send = AsyncMock(return_value={'id':'synthetic-receipt'})
+        host = NS(send_message=AsyncMock())
+        ctx = NS(context=NS(event=self.event, context=host))
+        route_send_tool(req, self.event)
+        result = await req.func_tool.get_tool(original.name).call(ctx, messages=[{'type':'plain','text':'测试'}])
+        self.assertIn('Message sent', result)
+        self.event.send.assert_awaited_once()
+        host.send_message.assert_not_awaited()
+        self.assertIs(tools.get_tool(original.name), original)
+        self.assertIs(ctx.context.context, host)
+        self.event.send.return_value = None
+        result = await req.func_tool.get_tool(original.name).call(ctx, messages=[{'type':'plain','text':'测试'}])
+        self.assertIn('not confirmed', result)
 
     async def test_late_token_preemption_blocks_native_io(self):
         sender = Transport(self.ctx,self.event,self.route)

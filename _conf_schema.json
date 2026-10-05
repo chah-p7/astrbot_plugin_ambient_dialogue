@@ -187,6 +187,11 @@
                 "type": "int",
                 "description": "插话最大字数",
                 "default": 240
+              },
+              "reply_fresh_seconds": {
+                "type": "int",
+                "description": "普通回复消息新鲜期（秒）",
+                "default": 180
               }
             }
           }
@@ -342,6 +347,11 @@
         "type": "int",
         "description": "插话最大字数",
         "default": 240
+      },
+      "reply_fresh_seconds": {
+        "type": "int",
+        "description": "普通回复消息新鲜期（秒）",
+        "default": 180
       }
     }
   }

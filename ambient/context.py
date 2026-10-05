@@ -4,10 +4,11 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import re
 import statistics
 import time
 
-from .policy import normalized, stable_id
+from .policy import noise, normalized, stable_id
 
 
 def compact(value):
@@ -98,13 +99,14 @@ def event_message(event, route, *, now=None):
 class Window:
     def __init__(self, policy, rows=()):
         self.policy = policy
-        self.rows = deque(rows, maxlen=policy.raw_limit)
+        self.rows = deque(sorted(rows, key=lambda r: r['at']), maxlen=policy.raw_limit)
 
     def add(self, row, now):
         self.trim(now)
         if any(r['id'] == row['id'] for r in self.rows):
             return False
         self.rows.append(row)
+        self.rows = deque(sorted(self.rows, key=lambda r: r['at']), maxlen=self.policy.raw_limit)
         return True
 
     def trim(self, now):
@@ -134,7 +136,9 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
 
     def render(r):
         result = {'ref': ids.get(r['id'], 'current'), 'speaker': 'bot' if r['self'] else aliases[r['member']],
-                  'text': r['text'], 'seconds_ago': max(0, int(now-r['at']))}
+                  'text': r['text'], 'at': int(r['at']), 'seconds_ago': max(0, int(now-r['at']))}
+        if r['self']:
+            result['source'] = r.get('source', 'interjection')
         if not r['self']:
             result['name'] = r.get('name', '')
         if r.get('quote'):
@@ -150,6 +154,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     style, counts, seen_text = [], Counter(), set()
     for r in reversed(rows):
         if (r['self'] or r['command'] or r['attachment'] or len(r['text']) > 180
+                or noise(r['text']) or re.search(r'(?:以后|接下来|一直|每次|只能).{0,32}(?:回复|回答|回|发|扣)', r['text'])
                 or now-r['at'] > p.style_minutes*60 or r['text'] in seen_text
                 or counts[r['member']] >= p.style_per_sender):
             continue
@@ -189,11 +194,14 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
              'question_ratio': round(sum('?' in r['text'] or '？' in r['text'] for r in human)/max(1, len(human)), 2),
              'emoji_ratio': round(sum(r['attachment'] for r in human)/max(1, len(human)), 2),
              'confirmed_self_ratio': round(sum(r['self'] for r in rows)/max(1, len(rows)), 2)}
-    pack = {'current_speaker': aliases.get(current['member']) if current else None,
+    pack = {'generated_at': int(now), 'current_message': render(current) if current else None,
+            'current_speaker': aliases.get(current['member']) if current else None,
             'memory_request_status': memory_status, 'recent_context': context_rows,
             'memory_snapshot': memory_rows, 'style_samples': style_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': len(recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+    if pack['current_message']:
+        pack['current_message']['text'] = pack['current_message']['text'][:p.pack_chars//3]
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}

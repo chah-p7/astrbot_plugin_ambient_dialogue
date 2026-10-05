@@ -62,6 +62,8 @@ class Store:
                     id INTEGER PRIMARY KEY CHECK(id=1), last_at REAL NOT NULL DEFAULT 0,
                     anchor TEXT NOT NULL DEFAULT '', reply_hash TEXT NOT NULL DEFAULT '');
                 INSERT OR IGNORE INTO interjection_gate(id) VALUES(1);
+                CREATE TABLE IF NOT EXISTS delivery_claims (
+                    key TEXT PRIMARY KEY, at REAL NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO meta(id,group_id) VALUES(1,?)', (group,))
             if db.execute('SELECT group_id FROM meta').fetchone()[0] != group:
@@ -271,6 +273,7 @@ class Store:
         return True
 
     def _trim_raw(self, db, now):
+        db.execute('DELETE FROM delivery_claims WHERE at<?', (now-3600,))
         db.execute('DELETE FROM raw_messages WHERE at<?',
                    (now - self.policy.raw_hours * 3600,))
         if not self.policy.raw_hours:
@@ -285,6 +288,17 @@ class Store:
                 db.execute('INSERT OR IGNORE INTO raw_messages VALUES(?,?,?)',
                            (message['id'], message['at'], json.dumps(message, ensure_ascii=False)))
                 self._trim_raw(db, now)
+
+    def claim_delivery(self, anchor, text_hash, *, now=None):
+        """One attempt per anchor/text, including uncertain outcomes and restart."""
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            db.execute('DELETE FROM delivery_claims WHERE at<?', (now-3600,))
+            changed = db.execute('INSERT OR IGNORE INTO delivery_claims VALUES(?,?)',
+                                 (stable_id(anchor, text_hash), now)).rowcount
+            db.execute('DELETE FROM delivery_claims WHERE key IN (SELECT key FROM delivery_claims '
+                       'ORDER BY at DESC,key LIMIT -1 OFFSET ?)', (self.policy.raw_limit,))
+        return bool(changed)
 
     def load_raw(self, *, now):
         with self.connection() as db:

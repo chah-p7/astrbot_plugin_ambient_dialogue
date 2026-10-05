@@ -6,7 +6,7 @@ import json
 import time
 
 from .context import build_pack, compact
-from .policy import SYSTEM_RULES, normalized, stable_id
+from .policy import SYSTEM_RULES, noise, normalized, reply_rejection, stable_id
 from .transport import Transport
 
 
@@ -36,9 +36,9 @@ class Interjections:
         state = self.states.setdefault(route.key, Participation())
         state.generation += 1
         state.event, state.current = event, row
-        state.last_input = now
+        state.last_input = row['at']
         state.observed += 1
-        state.pending = not (row['command'] or row['self'] or row['attachment'] or row['directed'])
+        state.pending = not (row['command'] or row['self'] or row['attachment'] or row['directed'] or noise(row['text']))
         if row['directed'] or row['self']:
             self.suppress(route, now=now)
 
@@ -64,7 +64,7 @@ class Interjections:
         now = time.time() if now is None else now
         for key, state in list(self.states.items()):
             route = self.runtime.routes.get(key)
-            if not route or not self.runtime.enabled(route, interject=True) or key in self.tasks:
+            if not route or not self.runtime.enabled(route, interject=True) or key in self.tasks or self.runtime.busy(route):
                 continue
             p = self.runtime.policy(route)
             if (not state.pending or now < max(state.next_check, state.suppressed_until)
@@ -95,7 +95,10 @@ class Interjections:
             if time.time()-gate['last_at'] < p.interject_cooldown_seconds or anchor == gate['anchor']:
                 state.outcome = 'cooldown_or_consumed'
                 return
-            pack = build_pack(window, snap, None, now=time.time())
+            if rt.busy(route) or time.time()-current['at'] > p.interject_fresh_seconds:
+                state.outcome = 'normal_reply_pending_or_stale'
+                return
+            pack = build_pack(window, snap, current, now=time.time())
             state.checks += 1
             response = await asyncio.wait_for(rt.context.llm_generate(
                 chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+
@@ -111,16 +114,16 @@ class Interjections:
                 state.outcome = 'silent'
                 return
             text = normalized(decision.get('text', '')) if isinstance(decision.get('text'), str) else ''
-            if (not text or len(text) > p.interject_max_chars or text.startswith('/')
-                    or any(x in text for x in ('[CQ:', '@全体', '@everyone', '<@', 'ambient_data'))
-                    or any(r['self'] and r['text'] == text for r in window.rows)):
-                state.outcome = 'invalid_draft'
+            rejection = reply_rejection(text, current, window, interject=True)
+            if rejection or len(text) > p.interject_max_chars or text.startswith('/'):
+                state.outcome = rejection or 'invalid_draft'
                 return
 
             async def before_send():
                 _, _, current_identity = await self.identity(route, event)
                 if (self.closed or not rt.enabled(route, interject=True) or settings != stable_id(rt.config)
                         or current_identity != identity or state.generation != generation
+                        or rt.busy(route)
                         or time.time()-state.last_input > p.interject_fresh_seconds
                         or time.time() < state.suppressed_until):
                     raise ValueError('draft_preempted')
@@ -128,14 +131,15 @@ class Interjections:
                 # Synchronous, short transaction: no await between final check and claim.
                 if not store.claim_interjection(anchor, stable_id(text), snap['revision']):
                     raise ValueError('draft_consumed_or_memory_changed')
+                rejection = reply_rejection(text, current, window, interject=True)
+                if rejection or not store.claim_delivery(current['id'], stable_id(text)):
+                    raise ValueError(rejection or 'duplicate_delivery')
                 state.outcome = 'sending'
 
             state.outcome = 'preparing_send'
-            receipt = await asyncio.wait_for(transport.send(text, before_send), 20)
-            row = {'id': receipt, 'sender': route.account, 'member': route.member(route.account),
-                   'name': 'bot', 'text': text, 'at': time.time(), 'self': True,
-                   'command': False, 'attachment': False, 'mentions': [], 'quote': None, 'directed': False}
-            await rt.record(route, row)
+            async with rt.send_locks.setdefault(route.key, asyncio.Lock()):
+                receipt = await asyncio.wait_for(transport.send(text, before_send), 20)
+                await rt.confirmed(route, current, text, receipt, 'interjection')
             state.sent += 1
             state.outcome = 'confirmed'
             state.suppressed_until = time.time()+p.interject_cooldown_seconds

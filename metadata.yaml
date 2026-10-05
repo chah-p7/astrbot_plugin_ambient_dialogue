@@ -1,7 +1,7 @@
 name: astrbot_plugin_ambient_dialogue
 display_name: Ambient Dialogue 群聊语境
 author: chah-p7
-version: 1.0.0
+version: 1.1.0
 desc: 现实群聊的近期语境、现场口吻、明确记忆与自然插话。
 repo: https://github.com/chah-p7/astrbot_plugin_ambient_dialogue
 astrbot_version: ">=4.26.7,<5"

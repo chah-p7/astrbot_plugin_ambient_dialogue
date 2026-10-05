@@ -107,5 +107,5 @@ class Transport:
 
         data = await BotAPI(SimpleNamespace(request=request)).post_group_message(
             group_openid=self.route.group, content=text, msg_type=0, msg_id=self.anchor,
-            msg_seq=10001+int(stable_id(self.route.key, self.anchor)[:8], 16) % 2147470000)
+            msg_seq=10001+int(stable_id(self.route.key, self.anchor, text)[:8], 16) % 2147470000)
         return data['id']

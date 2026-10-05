@@ -50,7 +50,18 @@ class AmbientDialogue(Star):
             await self.runtime.inject(event, req, TextPart)
         except Exception as exc:
             self.runtime.errors += 1
-            logger.warning('Ambient context skipped: %s', type(exc).__name__)
+            # Owned groups must never fall back to their old native history.
+            from .ambient.context import route_for
+            try:
+                if self.runtime.owns(route_for(self.context, event)):
+                    event.stop_event()
+            except Exception:
+                event.stop_event()
+            logger.warning('Ambient context unavailable: %s', type(exc).__name__)
+
+    @filter.on_llm_response(priority=-1000)
+    async def validate_reply(self, event: AstrMessageEvent, response):
+        await self.runtime.response(event, response)
 
     @filter.command('轻聊', priority=10000)
     async def memory_command(self, event: AstrMessageEvent):
