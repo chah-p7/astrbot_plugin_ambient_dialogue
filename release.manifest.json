@@ -18,7 +18,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "eaea01d3b34106edce1f8cfa77a2fa01fc5598ff196d75e5452a51d628a97cd7"
+      "sha256": "086da0901579dcc4fea687066792e247f30723b0eeb3e2a3074b23a368fb98f6"
     },
     {
       "path": "_conf_schema.json",
@@ -30,7 +30,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "391eb94dea13f2fbc8bb7a2ee16dfa8b55144035a0de09c800ce294f517b7e04"
+      "sha256": "23dff461da6da34ac42ff0fa3b004d0c41667c92bb4623aa4157258cf30f5f01"
     },
     {
       "path": "ambient/host.py",
@@ -38,11 +38,15 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "df90574ec968b3cf30b9404429f2d58ad2f065964f688e3a7196c2139fb7f2a4"
+      "sha256": "ef0f21db1914c16c3dde0e5c2f24e351fe603f5e66ba37aa2523098dc1c44622"
+    },
+    {
+      "path": "ambient/learning.py",
+      "sha256": "af9183aca9d7a64aa2765c729ba82e4dbd2cda107f2f4d4df21e5f2679f653d9"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "464bd77c02f9e4ad8136f8f2a0c97b5aa4957b5eeaa4112eec93ba0915e4fa26"
+      "sha256": "06bfd80547ee7b7b08c242a65e9f83b3358e885950f535573588567486a2b517"
     },
     {
       "path": "ambient/runtime.py",
@@ -66,7 +70,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "89023e3ada66350ec23b4b8ca4ef282c2331e7ced422d21207561a3e0f2620f9"
+      "sha256": "471a7f057ba722472433a9adfc890ce3263d10ef5d31661ffbade3fbdf249d32"
     },
     {
       "path": "requirements.txt",
@@ -75,6 +79,10 @@
     {
       "path": "tests/test_ambient.py",
       "sha256": "6668b651eabdcc48b84345a2880ff8886c11bf826de783281f716ea498517dbd"
+    },
+    {
+      "path": "tests/test_learning.py",
+      "sha256": "596f5cc3be5808ff69e87f45a341f6c880f62064761f997820ea95e9fe83c501"
     },
     {
       "path": "tests/test_native.py",

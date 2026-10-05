@@ -8,6 +8,7 @@ import time
 from .context import build_pack, compact
 from .policy import SYSTEM_RULES, noise, normalized, reply_rejection, stable_id
 from .transport import Transport
+from .learning import mentions
 
 
 @dataclass
@@ -39,6 +40,9 @@ class Interjections:
         state.last_input = row['at']
         state.observed += 1
         state.pending = not (row['command'] or row['self'] or row['attachment'] or row['directed'] or noise(row['text']))
+        if mentions(row) and 'bot' not in mentions(row):
+            state.pending = False
+            state.outcome = 'addressed_to_other_member'
         if row['directed'] or row['self']:
             self.suppress(route, now=now)
 
@@ -102,7 +106,8 @@ class Interjections:
             state.checks += 1
             response = await asyncio.wait_for(rt.context.llm_generate(
                 chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+
-                '\n你正在判断是否自然接入群聊。无需每次发言；若有明确可接的话再说。'
+                '\n你正在判断是否自然接入群聊。结合接话对象和近期反馈，只有读懂原意且有自然的接法才说；普通确认、办事问答和对别人的邀约可以安静旁听。'
+                '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
                 '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
                 prompt=compact({'ambient_data': pack}), contexts=[], tools=None,
                 fallback_chat_provider_ids=[], max_tokens=600, request_max_retries=0), p.interject_timeout_seconds)

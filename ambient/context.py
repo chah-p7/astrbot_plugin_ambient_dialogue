@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 import json
-import re
 import statistics
 import time
 
-from .policy import noise, normalized, stable_id
+from .policy import normalized, stable_id
+from .learning import MENTION, addressing, mentions as message_mentions, plain_text, reply_feedback, style_examples
 
 
 def compact(value):
@@ -74,6 +74,11 @@ def event_message(event, route, *, now=None):
             pieces.append({'Image': '[图片]', 'Record': '[语音]', 'Video': '[视频]',
                            'File': '[文件]', 'Face': '[表情]'}[kind])
     text = normalized(' '.join(pieces))[:1800]
+    mentions.extend(MENTION.findall(text))
+    event_self = str(event.get_self_id() or '')
+    bot_ids = {route.account, event_self} - {'', 'qq_official', 'unknown_selfid'}
+    mentions = list(dict.fromkeys('bot' if target in bot_ids else target for target in mentions))
+    text = plain_text(text)
     if not text:
         return None
     raw = getattr(obj, 'raw_message', None)
@@ -87,7 +92,6 @@ def event_message(event, route, *, now=None):
     except (ValueError, TypeError, OverflowError):
         at = now
     at = min(now, at)
-    event_self = str(event.get_self_id() or '')
     self_message = sender == route.account or (event_self not in {'', 'qq_official', 'unknown_selfid'} and sender == event_self)
     return {'id': identity, 'sender': sender, 'member': route.member(sender),
             'name': normalized(event.get_sender_name())[:40], 'text': text,
@@ -136,7 +140,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
 
     def render(r):
         result = {'ref': ids.get(r['id'], 'current'), 'speaker': 'bot' if r['self'] else aliases[r['member']],
-                  'text': r['text'], 'at': int(r['at']), 'seconds_ago': max(0, int(now-r['at']))}
+                  'text': plain_text(r['text']), 'at': int(r['at']), 'seconds_ago': max(0, int(now-r['at']))}
         if r['self']:
             result['source'] = r.get('source', 'interjection')
         if not r['self']:
@@ -144,25 +148,26 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         if r.get('quote'):
             q = r['quote']
             result['quote'] = {'ref': ids.get(q['id'], 'outside_window'),
-                               'speaker': accounts.get(q['sender'], 'unknown'), 'text': q['text']}
-        if r.get('mentions'):
-            result['mentions'] = [accounts.get(a, 'outside_window') for a in r['mentions']]
+                               'speaker': accounts.get(q['sender'], 'unknown'), 'text': plain_text(q['text'])}
+        if message_mentions(r):
+            result['mentions'] = [accounts.get(a, 'bot' if a == 'bot' else 'outside_window') for a in message_mentions(r)]
+        if not r['self']:
+            targets, basis = addressing(r, rows)
+            if targets:
+                result['addressing'] = {'targets': [accounts.get(a, 'bot' if a == 'bot' else 'outside_window') for a in targets],
+                                        'basis': basis}
         return result
 
     recent = [r for r in rows if now-r['at'] <= p.recent_minutes*60 and
               (not current or r['id'] != current['id']) and not r['command']][-p.recent_messages:]
-    style, counts, seen_text = [], Counter(), set()
-    for r in reversed(rows):
-        if (r['self'] or r['command'] or r['attachment'] or len(r['text']) > 180
-                or noise(r['text']) or re.search(r'(?:以后|接下来|一直|每次|只能).{0,32}(?:回复|回答|回|发|扣)', r['text'])
-                or now-r['at'] > p.style_minutes*60 or r['text'] in seen_text
-                or counts[r['member']] >= p.style_per_sender):
-            continue
-        style.append(r)
-        seen_text.add(r['text'])
-        counts[r['member']] += 1
-        if len(style) >= p.style_messages:
-            break
+    style = []
+    for row, lead, link in style_examples(rows, p, now, current):
+        sample = render(row)
+        if lead:
+            sample['lead_in'], sample['link'] = render(lead), link
+        style.append(sample)
+    feedback = [{'reply': render(reply), 'reaction': render(reaction), 'kind': kind}
+                for reply, reaction, kind in reply_feedback(rows, p, now)]
 
     def bounded(items, limit):
         kept = []
@@ -186,7 +191,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                            'at': int(r['at']), 'state': 'pending'})
     context_rows = bounded([render(r) for r in reversed(recent)], p.recent_chars)
     context_rows.reverse()
-    style_rows = bounded([render(r) for r in style], p.style_chars)
+    feedback_rows = bounded(feedback, min(700, p.style_chars//2))
+    style_rows = bounded(style, p.style_chars-len(compact(feedback_rows)))
     memory_rows = bounded(memory, p.memory_chars)
     human = [r for r in rows if not r['self'] and not r['command'] and now-r['at'] <= p.style_minutes*60]
     stats = {'median_chars': statistics.median([len(r['text']) for r in human]) if human else 0,
@@ -197,7 +203,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     pack = {'generated_at': int(now), 'current_message': render(current) if current else None,
             'current_speaker': aliases.get(current['member']) if current else None,
             'memory_request_status': memory_status, 'recent_context': context_rows,
-            'memory_snapshot': memory_rows, 'style_samples': style_rows,
+            'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': len(recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
     if pack['current_message']:
@@ -205,7 +211,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'memory_snapshot', 'recent_context'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context'):
         while pack[key] and len(compact(pack)) > p.pack_chars:
             pack[key].pop(0 if key == 'recent_context' else -1)
             pack['omitted_count'] += 1
