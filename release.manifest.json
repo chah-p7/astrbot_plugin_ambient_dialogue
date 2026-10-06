@@ -18,7 +18,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "086da0901579dcc4fea687066792e247f30723b0eeb3e2a3074b23a368fb98f6"
+      "sha256": "d35bbd85f435f2172c045e97d1f1256150f2ab0d232473a332c3652454f45090"
     },
     {
       "path": "_conf_schema.json",
@@ -30,7 +30,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "23dff461da6da34ac42ff0fa3b004d0c41667c92bb4623aa4157258cf30f5f01"
+      "sha256": "c9ab201005cca923af0cb416851794ffc024eb80b45b6beea9545219701bafde"
     },
     {
       "path": "ambient/host.py",
@@ -42,11 +42,11 @@
     },
     {
       "path": "ambient/learning.py",
-      "sha256": "af9183aca9d7a64aa2765c729ba82e4dbd2cda107f2f4d4df21e5f2679f653d9"
+      "sha256": "ff3e3082534eb5f9b2fd2d87d0b00b4edd4414cd3ec2f7bf8bd53f5e2c59506e"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "06bfd80547ee7b7b08c242a65e9f83b3358e885950f535573588567486a2b517"
+      "sha256": "9fae179decda59b9dba013b75bae34dff0d1547ea80449babbc3aaa5a36d9d6b"
     },
     {
       "path": "ambient/runtime.py",
@@ -65,12 +65,16 @@
       "sha256": "ce26be219c3b2f2f3e446e780bd26af723a5e5b43964205da28c388d5620248a"
     },
     {
+      "path": "docs/THIRD_PARTY.md",
+      "sha256": "6e84e91fba85f9a1985896364c41d2f0b057f8d70e2e0203e4bf39398e1ee467"
+    },
+    {
       "path": "main.py",
       "sha256": "68db303267310c2e252e0a0431bc9ca8b354ee1cfa0f3a48cec30b971e1a93bb"
     },
     {
       "path": "metadata.yaml",
-      "sha256": "471a7f057ba722472433a9adfc890ce3263d10ef5d31661ffbade3fbdf249d32"
+      "sha256": "77d58f9d4e6e31d5a086fd1448d355e826e80fde3dee00958bd6db02c18e2021"
     },
     {
       "path": "requirements.txt",
@@ -78,11 +82,11 @@
     },
     {
       "path": "tests/test_ambient.py",
-      "sha256": "6668b651eabdcc48b84345a2880ff8886c11bf826de783281f716ea498517dbd"
+      "sha256": "49aa8fd79bf54481f43769e047b28c21c2263e4911869a0d919939f8bae90951"
     },
     {
       "path": "tests/test_learning.py",
-      "sha256": "596f5cc3be5808ff69e87f45a341f6c880f62064761f997820ea95e9fe83c501"
+      "sha256": "857e602a60d3d76719f17aa109065cf778d061891f7fd0e632a4cecc268be643"
     },
     {
       "path": "tests/test_native.py",

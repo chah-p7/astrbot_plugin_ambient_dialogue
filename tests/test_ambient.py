@@ -181,7 +181,8 @@ class AmbientTests(unittest.IsolatedAsyncioTestCase):
             row['self'] = i%11 == 0
             window.add(row, now)
         window.add({**window.rows[0], 'id':'ancient', 'at':now-7201}, now)
-        p = build_pack(window, store.snapshot(), event_message(self.event, self.route), now=now)
+        current = event_message(Event(mid='current'), self.route, now=now)
+        p = build_pack(window, store.snapshot(), current, now=now)
         self.assertLessEqual(len(compact(p)), 8300)
         self.assertLessEqual(len(p['recent_context']), 24)
         self.assertLessEqual(len(p['style_samples']), 16)

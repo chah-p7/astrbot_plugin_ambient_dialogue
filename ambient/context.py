@@ -8,7 +8,7 @@ import statistics
 import time
 
 from .policy import normalized, stable_id
-from .learning import MENTION, addressing, mentions as message_mentions, plain_text, reply_feedback, style_examples
+from .learning import MENTION, addressing, mentions as message_mentions, plain_text, quote_source, reply_feedback, style_examples
 
 
 def compact(value):
@@ -66,9 +66,10 @@ def event_message(event, route, *, now=None):
         elif kind == 'At':
             mentions.append(str(getattr(part, 'qq', '')))
         elif kind == 'Reply':
+            quoted_text = normalized(getattr(part, 'message_str', ''))
             quote = {'id': str(getattr(part, 'id', ''))[:256],
                      'sender': str(getattr(part, 'sender_id', '') or ''),
-                     'text': normalized(getattr(part, 'message_str', ''))[:240]}
+                     'text': quoted_text[:240], 'truncated': len(quoted_text) > 240}
         elif kind in {'Image', 'Record', 'Video', 'File', 'Face'}:
             attachment = True
             pieces.append({'Image': '[图片]', 'Record': '[语音]', 'Video': '[视频]',
@@ -147,8 +148,11 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             result['name'] = r.get('name', '')
         if r.get('quote'):
             q = r['quote']
-            result['quote'] = {'ref': ids.get(q['id'], 'outside_window'),
-                               'speaker': accounts.get(q['sender'], 'unknown'), 'text': plain_text(q['text'])}
+            source, link = quote_source(r, rows)
+            result['quote'] = {'ref': ids.get(source['id'], 'outside_window') if source else 'outside_window',
+                               'speaker': accounts.get(source['sender'], 'unknown') if source else accounts.get(q.get('sender'), 'unknown'),
+                               'text': plain_text(source['text'] if source else q.get('text', ''))[:240],
+                               'link': link or 'unresolved'}
         if message_mentions(r):
             result['mentions'] = [accounts.get(a, 'bot' if a == 'bot' else 'outside_window') for a in message_mentions(r)]
         if not r['self']:
@@ -161,10 +165,16 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     recent = [r for r in rows if now-r['at'] <= p.recent_minutes*60 and
               (not current or r['id'] != current['id']) and not r['command']][-p.recent_messages:]
     style = []
+    def style_line(row):
+        return {'ref': ids[row['id']], 'speaker': aliases[row['member']], 'text': plain_text(row['text'])}
+
     for row, lead, link in style_examples(rows, p, now, current):
-        sample = render(row)
+        # Keep source anchors and whole messages; use the budget for real speech
+        # instead of duplicating names, timestamps and addressing on every sample.
+        sample = style_line(row)
+        sample['link'] = link
         if lead:
-            sample['lead_in'], sample['link'] = render(lead), link
+            sample['lead_in'] = style_line(lead)
         style.append(sample)
     feedback = [{'reply': render(reply), 'reaction': render(reaction), 'kind': kind}
                 for reply, reaction, kind in reply_feedback(rows, p, now)]
@@ -196,6 +206,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     memory_rows = bounded(memory, p.memory_chars)
     human = [r for r in rows if not r['self'] and not r['command'] and now-r['at'] <= p.style_minutes*60]
     stats = {'median_chars': statistics.median([len(r['text']) for r in human]) if human else 0,
+             'example_median_chars': statistics.median([len(r['text']) for r in style_rows]) if style_rows else 0,
              'short_ratio': round(sum(len(r['text']) <= 20 for r in human)/max(1, len(human)), 2),
              'question_ratio': round(sum('?' in r['text'] or '？' in r['text'] for r in human)/max(1, len(human)), 2),
              'emoji_ratio': round(sum(r['attachment'] for r in human)/max(1, len(human)), 2),
