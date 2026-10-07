@@ -77,11 +77,17 @@ def event_message(event, route, *, now=None):
     text = normalized(' '.join(pieces))[:1800]
     mentions.extend(MENTION.findall(text))
     event_self = str(event.get_self_id() or '')
-    bot_ids = {route.account, event_self} - {'', 'qq_official', 'unknown_selfid'}
+    # GROUP_AT_MESSAGE_CREATE may carry the adapter's qq_official sentinel.
+    # It is still an explicit At(self_id), even when no mention ID is supplied.
+    bot_ids = {route.account, event_self} - {'', 'unknown_selfid'}
     mentions = list(dict.fromkeys('bot' if target in bot_ids else target for target in mentions))
     text = plain_text(text)
+    directed = bool(getattr(event, 'is_at_or_wake_command', False))
+    attention_only = not text and directed and ('bot' in mentions or quote is not None)
     if not text:
-        return None
+        if not attention_only:
+            return None
+        text = '[引用消息，无附加正文]' if quote else '[仅@机器人，无正文]'
     raw = getattr(obj, 'raw_message', None)
     timestamp = getattr(raw, 'timestamp', None)
     if timestamp is None and isinstance(raw, dict):
@@ -98,7 +104,7 @@ def event_message(event, route, *, now=None):
             'name': normalized(event.get_sender_name())[:40], 'text': text,
             'at': at, 'self': self_message, 'command': text.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
-            'directed': bool(getattr(event, 'is_at_or_wake_command', False))}
+            'attention_only': attention_only, 'directed': directed}
 
 
 class Window:
@@ -146,6 +152,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             result['source'] = r.get('source', 'interjection')
         if not r['self']:
             result['name'] = r.get('name', '')
+        if r.get('attention_only'):
+            result['attention_only'] = True
         if r.get('quote'):
             q = r['quote']
             source, link = quote_source(r, rows)

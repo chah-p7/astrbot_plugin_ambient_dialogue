@@ -6,6 +6,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
+from astrbot.core.provider.entities import ProviderRequest
 
 from .ambient.runtime import Runtime
 
@@ -39,7 +40,7 @@ class AmbientDialogue(Star):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=1000)
     async def capture(self, event: AstrMessageEvent):
         try:
-            await self.runtime.observe(event)
+            await self.runtime.observe(event, request_type=ProviderRequest)
         except Exception as exc:
             self.runtime.errors += 1
             logger.warning('Ambient capture skipped: %s', type(exc).__name__)

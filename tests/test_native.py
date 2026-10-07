@@ -133,6 +133,67 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await rt.close()
 
+    async def test_bare_at_crosses_actual_host_empty_message_gate(self):
+        import astrbot
+        from astrbot.core.message.components import At, Image, File, Record, Reply, Video
+        from astrbot.core.provider.entities import ProviderRequest
+        from astrbot.core.agent.message import TextPart
+        self.event.is_at_or_wake_command = True
+        self.event.message_str = ''
+        self.event.message_obj.message = [At(qq='qq_official')]
+        # Execute the native gate, so changes in host component types or its
+        # provider_request contract cannot be hidden by a synthetic predicate.
+        path = Path(astrbot.__file__).parent/'core/pipeline/process_stage/method/agent_sub_stages/internal.py'
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        method = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'process')
+        block = next(n for n in ast.walk(method) if isinstance(n, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == 'has_provider_request' for t in n.targets))
+        parent = next(n for n in ast.walk(method) if hasattr(n, 'body') and isinstance(n.body, list) and block in n.body)
+        start = parent.body.index(block)
+        statements = parent.body[start:start+5]
+        self.assertIsInstance(statements[-1], ast.If)
+        function = ast.parse('def gate(event):\n    pass').body[0]
+        function.body = statements + [ast.Return(value=ast.Constant(True))]
+        env = dict(Image=Image, File=File, Record=Record, Reply=Reply, Video=Video, logger=Mock())
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])), '<native-empty-gate>', 'exec'), env)
+        self.assertIsNone(env['gate'](self.event))
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, {'groups':[{'umo':self.route.umo, 'capture_only':False}]})
+            try:
+                await rt.observe(self.event, request_type=ProviderRequest)
+                self.assertTrue(env['gate'](self.event))
+                req = self.event.get_extra('provider_request')
+                self.assertIsInstance(req, ProviderRequest)
+                await rt.inject(self.event, req, TextPart)
+                self.assertTrue(json.loads(req.extra_user_content_parts[-1].text)['ambient_data']['current_message']['attention_only'])
+            finally:
+                await rt.close()
+
+    async def test_repaired_native_response_and_stream_have_one_confirmed_receipt(self):
+        from astrbot.core.agent.message import TextPart
+        from astrbot.core.provider.entities import ProviderRequest, LLMResponse
+        from astrbot.core.message.message_event_result import MessageChain
+        self.event.is_at_or_wake_command = True
+        self.ctx.llm_generate.return_value = LLMResponse(role='assistant', completion_text='在，刚才走神了')
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, {'groups':[{'umo':self.route.umo, 'capture_only':False}]})
+            try:
+                await rt.inject(self.event, ProviderRequest(prompt='还活着吗'), TextPart)
+                response = LLMResponse(role='assistant', result_chain=MessageChain().message('u1还活着'))
+                await rt.response(self.event, response)
+                self.assertEqual('在，刚才走神了', response.result_chain.get_plain_text())
+                # Streaming chunks were emitted before the final response hook.
+                async def chunks():
+                    yield MessageChain().message('u1')
+                    yield MessageChain().message('还活着')
+                await self.event.send_streaming(chunks())
+                await self.event.send(response.result_chain)
+                self.assertEqual(1, len(self.calls))
+                self.assertEqual('在，刚才走神了', self.calls[0]['json']['content'])
+                self.ctx.llm_generate.assert_awaited_once()
+            finally:
+                await rt.close()
+
     async def test_host_followups_do_not_bypass_context_gate(self):
         from astrbot.core.pipeline.process_stage.follow_up import _ACTIVE_AGENT_RUNNERS, try_capture_follow_up
         runner = NS(follow_up=Mock(), run_context=NS(context=NS(event=self.event)))
