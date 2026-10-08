@@ -212,7 +212,7 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
             await self.rt.observe(event, request_type=NS)
             self.assertIsNone(event.get_extra('provider_request'))
 
-    async def test_repair_uses_same_context_without_tools_and_only_one_call(self):
+    async def test_repair_without_search_uses_same_context_and_only_one_call(self):
         event = directed('把他打飞好不好')
         self.ctx.llm_generate.return_value = NS(completion_text='先把你自己的早八打飞吧')
         await self.answer(event, 'u2先起飞')

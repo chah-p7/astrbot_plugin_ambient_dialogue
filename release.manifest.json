@@ -18,7 +18,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "3481b1d4c9e7488c2f01386a0a655d5d81ba291514030765cde1d45e35fb7cd2"
+      "sha256": "f3b80438f8f5f753e8f967e23326f823f16134b641d74bdf7b34912757e6429a"
     },
     {
       "path": "_conf_schema.json",
@@ -42,7 +42,7 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "3c1365ac905685e97b292fc745f323222c74917728aae3ce8352b3e708f60cff"
+      "sha256": "56d191f35a79c58c87d6e36afc18dfd294d8921e90e0b9f665832e18b079199e"
     },
     {
       "path": "ambient/learning.py",
@@ -50,11 +50,15 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "13d93498b0cab4132098378bdbd6f4c734f104732f44cbbe34c81c6d9f181ff5"
+      "sha256": "7688deeb7882d1ec994fcca3e618a622293d77e970ff3503acb8b703a75ff210"
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "83c5900e22e02ec84b301170732e9ff3dadb07db72c3b62043f9e89dffeec88f"
+      "sha256": "398a7ab94881bea4dbd7a201d8090785139f29c62d5dde2422026756ed212bbb"
+    },
+    {
+      "path": "ambient/search.py",
+      "sha256": "b209cc522426b8ea446f290dde961d9c434f494c9c741d0df8d2179953f864f4"
     },
     {
       "path": "ambient/store.py",
@@ -82,7 +86,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "d822557c1201d6cd61ec7e87c4204d3d0f298dece817b6252f7bf0bedaf5da80"
+      "sha256": "6e6e7ec28ce80a3e19c4167ca766f0ca10eda4dccd4d1947ac15581cbcb67368"
     },
     {
       "path": "requirements.txt",
@@ -105,12 +109,16 @@
       "sha256": "1b5ffba5dd1de57667ab026c3b57c4b2949ad9541c5d9741611f3ac50abf0b77"
     },
     {
+      "path": "tests/test_search.py",
+      "sha256": "8a44ca55c85670fc67d8d958ebb9124996f7760c78ca995f7227c3973d5d5d63"
+    },
+    {
       "path": "tests/test_style_eval.py",
       "sha256": "214b336ed5b75ebcb53c90d5b12050057035996fcd1306dc991e5caa2b249dda"
     },
     {
       "path": "tests/test_unified.py",
-      "sha256": "8bbafd0355e0bdfa2b36ef35ab456c9e3c807b111b36e00a5050203dc36df37a"
+      "sha256": "922c185d76a1b62cd6bfa76aa29633b64d02ca5a608afb0f0bacd280f128a485"
     },
     {
       "path": "tools/build_schema.py",

@@ -10,6 +10,7 @@ from .delivery import send_reply_parts
 from .policy import SYSTEM_RULES, noise, reply_rejection, stable_id
 from .transport import Transport
 from .learning import mentions
+from .search import generate, settings_id
 
 
 @dataclass
@@ -92,6 +93,7 @@ class Interjections:
         settings = stable_id(rt.config)
         confirmed_parts = 0
         try:
+            search_settings = settings_id(rt.context, event)
             transport = Transport(rt.context, event, route)
             provider, persona, identity = await self.identity(route, event)
             store, window = await rt.ensure(route)
@@ -105,14 +107,25 @@ class Interjections:
                 state.outcome = 'normal_reply_pending_or_stale'
                 return
             pack = build_pack(window, snap, current, now=time.time())
+
+            async def draft_guard():
+                _, _, current_identity = await self.identity(route, event)
+                if (self.closed or not rt.enabled(route, interject=True) or settings != stable_id(rt.config)
+                        or current_identity != identity or state.generation != generation
+                        or rt.busy(route) or time.time()-state.last_input > p.interject_fresh_seconds
+                        or time.time() < state.suppressed_until or store.memory_revision() != snap['revision']
+                        or search_settings != settings_id(rt.context, event)):
+                    raise ValueError('draft_preempted')
+                transport.check()
+
             state.checks += 1
-            response = await asyncio.wait_for(rt.context.llm_generate(
+            response = await asyncio.wait_for(generate(rt.context, event,
                 chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+
                 '\n你正在判断是否自然接入群聊。结合接话对象和近期反馈，只有读懂原意且有自然的接法才说；普通确认、办事问答和对别人的邀约可以安静旁听。'
                 '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
                 '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
-                prompt=compact({'ambient_data': pack}), contexts=[], tools=None,
-                fallback_chat_provider_ids=[], max_tokens=600, request_max_retries=0), p.interject_timeout_seconds)
+                prompt=compact({'ambient_data': pack}), guard=draft_guard,
+                expected_settings=search_settings, max_tokens=600), p.interject_timeout_seconds)
             raw = str(getattr(response, 'completion_text', '')).strip()
             if raw.startswith('```') and raw.endswith('```'):
                 raw = raw.split('\n', 1)[1].rsplit('```', 1)[0]
@@ -130,15 +143,7 @@ class Interjections:
 
             async def before_send():
                 nonlocal claimed
-                _, _, current_identity = await self.identity(route, event)
-                if (self.closed or not rt.enabled(route, interject=True) or settings != stable_id(rt.config)
-                        or current_identity != identity or state.generation != generation
-                        or rt.busy(route)
-                        or time.time()-state.last_input > p.interject_fresh_seconds
-                        or time.time() < state.suppressed_until
-                        or (claimed and store.memory_revision() != snap['revision'])):
-                    raise ValueError('draft_preempted')
-                transport.check()
+                await draft_guard()
                 # Synchronous, short transaction: no await between final check and claim.
                 if not claimed and not store.claim_interjection(anchor, stable_id(text), snap['revision']):
                     raise ValueError('draft_consumed_or_memory_changed')
