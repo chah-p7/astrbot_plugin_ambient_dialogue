@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 import re
 
 from .policy import noise, normalized
@@ -9,6 +10,15 @@ from .policy import noise, normalized
 
 MENTION = re.compile(r'<@!?([A-Za-z0-9_-]{1,128})>')
 FORMAT_ORDER = re.compile(r'(?:以后|接下来|一直|每次|只能).{0,32}(?:回复|回答|回|发|扣)')
+SHORT_REACTION = re.compile(r'(?:嗯|哦|啊|诶|欸|呃|额|哈|呵|嘿|嘻){1,6}[。.!！~～…]*')
+
+
+@dataclass(frozen=True)
+class StyleExample:
+    row: dict
+    lead: dict | None
+    link: str
+    context: tuple = ()
 
 
 def mentions(row):
@@ -65,15 +75,19 @@ def signals(text):
     scenes = {name for name, pattern in (
         ('invitation', r'一起|来不来|玩吗|吃饭|打游戏|出去|约|几点|午饭|晚饭'),
         ('thanks', r'谢谢|感谢|多谢'),
-        ('help', r'怎么|请教|咋|报错|代码|解决|服务器|接口|内存|程序'),
+        ('help', r'请教|求助|报错|代码|服务器|接口|内存|程序|闪退|崩溃|启动不了'),
         ('banter', r'哈哈|笑死|草|绷|蚌|离谱|逆天|乐了|寄了'),
         ('arrangement', r'提交|老师|报告|开会|时间|作业|收到|出发'),
-        ('correction', r'不是这个意思|理解错|看错|别插话|没跟你说|没和你说'),
+        ('correction', r'不是这个意思|理解错|看错|别插话|没跟你说|没和你说|别.{0,5}(?:阴阳|损我)|(?i:ai).{0,3}味'),
+        ('opinion', r'好不好|好看|好玩|怎么样|咋样|喜欢|难看|没意思'),
+        ('daily', r'睡醒|起床|睡不着|熬夜|犯困|刚睡|没睡'),
+        ('frustration', r'无聊|没招|白忙|又坏|烦死|累死|忘了|破防'),
     ) if re.search(pattern, text)}
     intents = {name for name, pattern in (
         ('decline', r'不去|不来|不了|没空|算了|拒绝|不打'),
         ('accept', r'好的|可以|行啊|没问题|收到'),
-        ('question', r'[?？]|怎么|咋|几点|为啥'),
+        ('question', r'[?？吗]|怎么|咋|几点|为啥|有没有|好不好'),
+        ('acknowledge', r'^(?:嗯+|哦+|好[的啊吧]?|行[啊吧]?|知道了|收到)[。!！~～]*$'),
         ('tease', r'调戏|打趣|笑|哈哈|绷|离谱|逆天'),
     ) if re.search(pattern, text)}
     return scenes, intents
@@ -88,27 +102,47 @@ def words(text):
 
 
 def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
+    rows = sorted(rows, key=lambda r: r['at'])
+    bot_targets = {'bot', *excluded}
+
     def eligible(row):
+        text = plain_text(row['text'])
         return (not any(row.get(k) for k in ('self', 'command', 'attachment', 'directed'))
                 and row['sender'] not in excluded
-                and not ({'bot', *excluded} & set(mentions(row)))
+                and not (bot_targets & set(mentions(row)))
+                and (row.get('quote') or {}).get('sender') not in bot_targets
                 and 0 <= now-row['at'] <= policy.style_minutes*60
                 and (not current or (row['id'] != current['id'] and row['at'] <= current['at']))
-                and len(row['text']) <= 180 and not noise(plain_text(row['text']))
+                and 0 < len(text) <= 180 and (not noise(text) or SHORT_REACTION.fullmatch(text))
                 and not re.search(r'\[(?:表情|图片|语音|视频|文件|卡片消息)', row['text'])
                 and not FORMAT_ORDER.search(row['text']))
 
     available = {r['id']: r for r in rows if eligible(r)}
+    links = {ident: quote_source(row, rows) for ident, row in available.items()}
+    for ident, (lead, _) in links.items():
+        if lead and (lead['self'] or lead['sender'] in excluded):
+            available.pop(ident)
     examples = []
-    for row in rows:
+    for index, row in enumerate(rows):
         if row['id'] not in available:
             continue
-        lead, link = quote_source(row, rows)
-        if lead and (lead['self'] or lead['sender'] in excluded):
-            continue
-        if lead and (lead['id'] not in available or len(plain_text(lead['text'])) < 2):
+        lead, link = links[row['id']]
+        if lead and (lead['id'] not in available or noise(plain_text(lead['text']))):
             lead = None
-        examples.append((row, lead, link if lead else 'single'))
+        before = []
+        # Adjacent lines remain timeline evidence, never invented reply edges.
+        # Stop at an excluded message instead of joining across a bot/command.
+        for previous in reversed(rows[max(0, index-policy.style_context_messages):index]):
+            if previous['id'] not in available or row['at']-previous['at'] > policy.style_context_seconds:
+                break
+            if lead and previous['id'] == lead['id']:
+                break
+            before.append(previous)
+        before.reverse()
+        reaction = bool(SHORT_REACTION.fullmatch(plain_text(row['text'])))
+        if reaction and not (lead or any(not noise(plain_text(r['text'])) for r in before)):
+            continue
+        examples.append(StyleExample(row, lead, link if lead else 'single', tuple(before)))
     query = current['text'] if current else ''
     source, _ = quote_source(current, rows) if current else (None, '')
     if source:
@@ -117,29 +151,46 @@ def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
     terms = words(query)
 
     def rank(example):
-        row, lead, _ = example
+        row, lead = example.row, example.lead
         incoming = lead or row
-        old_scenes, _ = signals(incoming['text'])
-        _, old_intents = signals(row['text'])
-        overlap = len(terms & words(incoming['text']))
-        similar = bool(scenes & old_scenes or overlap)
+        incoming_text = incoming['text']
+        if not lead:
+            incoming_text = ' '.join([r['text'] for r in example.context if r['sender'] == row['sender']] + [incoming_text])
+        old_scenes, old_intents = signals(incoming_text)
+        overlap = len(terms & words(incoming_text))
+        scene_match = len(scenes & old_scenes)
         same = bool(current and incoming['sender'] == current['sender'])
-        tier = 3 if same and similar else 2 if same else 1 if similar else 0
-        return tier, bool(lead), len(intents & old_intents), overlap, row['at']
+        return bool(scene_match or overlap), scene_match, overlap, len(intents & old_intents), bool(lead), same, row['at']
 
-    # Prefer the current person's matching scene, then the person or scene.
-    # Unlinked lines still describe room voice, never an invented exchange.
+    # Scene and incoming intent precede identity; do not copy the asker's tone
+    # just because an unrelated line happens to come from the same person.
     examples.sort(key=rank, reverse=True)
-    selected, counts, seen = [], Counter(), set()
-    for row, lead, link in examples:
-        if row['text'] in seen or counts[row['member']] >= policy.style_per_sender:
+    selected, counts, covered, reactions = [], Counter(), set(), 0
+    for example in examples:
+        row = example.row
+        reaction = bool(SHORT_REACTION.fullmatch(plain_text(row['text'])))
+        if (row['id'] in covered or counts[row['member']] >= policy.style_per_sender
+                or (reaction and reactions >= max(1, policy.style_messages//5))
+                or any(similar_style(row['text'], old.row['text']) for old in selected)):
             continue
-        selected.append((row, lead, link))
-        seen.add(row['text'])
+        selected.append(example)
+        covered.update(r['id'] for r in (row, *example.context))
+        reactions += reaction
         counts[row['member']] += 1
         if len(selected) >= policy.style_messages:
             break
     return selected
+
+
+def similar_style(first, second):
+    """Collapse cosmetic variants without merging ordinary distinct short replies."""
+    first, second = (re.sub(r'[\W_]+', '', plain_text(s).lower()) for s in (first, second))
+    if first == second:
+        return True
+    if min(len(first), len(second)) < 8:
+        return False
+    a, b = words(first), words(second)
+    return bool(a and b) and len(a & b)/len(a | b) >= .85
 
 
 def reply_feedback(rows, policy, now, *, excluded=frozenset()):
@@ -148,7 +199,7 @@ def reply_feedback(rows, policy, now, *, excluded=frozenset()):
         ('wrong_addressee', r'没(?:和|跟)你说|不是(?:在)?(?:问|叫|跟|和)你|没你.{0,4}事|别抢答'),
         ('misunderstood', r'理解错|看错了|不是这个意思|答非所问|话都看不明白|胡编|乱编'),
         ('unwelcome_interjection', r'闭嘴|别插话|不要插话|停止.{0,12}(?:输出|发消息)|咋啥事都有你'),
-        ('unnatural_style', r'(?i:ai).{0,3}味|像(?:个)?(?:机器人|客服)|小作文|又.{0,6}(?:说话腔调|这个腔调)|别.{0,6}(?:硬玩梗|解释笑点)'),
+        ('unnatural_style', r'(?i:ai).{0,3}味|像(?:个)?(?:机器人|客服)|小作文|又.{0,6}(?:说话腔调|这个腔调)|别.{0,6}(?:硬玩梗|解释笑点|阴阳|损我)|太端着'),
     )
     confirmed, selected, seen = {}, [], set()
     for index, row in enumerate(rows):

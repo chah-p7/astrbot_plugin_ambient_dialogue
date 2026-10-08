@@ -6,7 +6,7 @@ import unittest
 
 from test_ambient import Event, context
 from ambient.context import Window, build_pack, compact, event_message, route_for
-from ambient.learning import quote_source, reply_feedback, style_examples
+from ambient.learning import SHORT_REACTION, quote_source, reply_feedback, style_examples
 from ambient.policy import Policy
 from ambient.runtime import Runtime
 
@@ -23,6 +23,14 @@ class LearningTests(unittest.TestCase):
 
     def pack(self, rows, current=None, **limits):
         return build_pack(Window(replace(self.policy, **limits), rows), {}, current, now=self.now)
+
+    def test_new_sample_defaults_preserve_existing_config_capacity(self):
+        self.assertEqual(5, Policy.from_config({}).style_messages)
+        self.assertEqual(80, Policy.from_config({'limits': {'style_messages': 80}}).style_messages)
+        limits = {'style_context_messages': 0, 'style_context_seconds': 900}
+        policy = Policy.from_config({'limits': limits})
+        self.assertEqual(0, policy.style_context_messages)
+        self.assertEqual(120, policy.style_context_seconds)
 
     def test_qq_plain_mentions_and_cached_markup_are_private_and_targeted(self):
         member = self.row('我明天早上到', 'arrival', 'PRIVATE_USER_42', ago=5)
@@ -70,19 +78,19 @@ class LearningTests(unittest.TestCase):
         rows = [self.row('你那里下雨了吗', 'a', 'A', ago=15), self.row('键盘又坏了', 'b', 'B')]
         examples = style_examples(rows, self.policy, self.now)
         self.assertTrue(examples)
-        self.assertTrue(all(lead is None and link == 'single' for _, lead, link in examples))
+        self.assertTrue(all(e.lead is None and e.link == 'single' for e in examples))
         mentioned = {**rows[1], 'mentions': ['A']}
-        self.assertFalse(any(lead for _, lead, _ in style_examples([rows[0], mentioned], self.policy, self.now)))
+        self.assertFalse(any(e.lead for e in style_examples([rows[0], mentioned], self.policy, self.now)))
         separated = [rows[0], {**rows[1], 'at': self.now+60}]
-        self.assertFalse(any(lead for _, lead, _ in style_examples(separated, self.policy, self.now+60)))
+        self.assertFalse(any(e.lead for e in style_examples(separated, self.policy, self.now+60)))
 
     def test_unresolved_mentions_and_parallel_topics_are_not_made_into_pairs(self):
         rows = [self.row('这机器人又答错了', 'a', 'A', ago=10),
                 self.row('十点不用排队', 'b', 'B', ago=5),
                 self.row('<@NOT_IN_WINDOW> 打钱来', 'c', 'C'),
                 self.row('[表情:[我要吃]]', 'd', 'D')]
-        self.assertFalse(any(lead for _, lead, _ in style_examples(rows, self.policy, self.now)))
-        self.assertNotIn('d', [row['id'] for row, _, _ in style_examples(rows, self.policy, self.now)])
+        self.assertFalse(any(e.lead for e in style_examples(rows, self.policy, self.now)))
+        self.assertNotIn('d', [e.row['id'] for e in style_examples(rows, self.policy, self.now)])
 
     def test_feedback_requires_specific_correction_and_a_confirmed_target(self):
         bot = self.row('明年只开一次', 'bot', '12345', ago=30)
@@ -144,7 +152,7 @@ class LearningTests(unittest.TestCase):
         meal = self.row('明天几点出去吃饭', 'meal', 'A', ago=10)
         current = self.row('代码又炸了，咋整', 'current', 'A', directed=True)
         rows = [code, catch, meal, current]
-        self.assertEqual('catch', style_examples(rows, self.policy, self.now, current)[0][0]['id'])
+        self.assertEqual('catch', style_examples(rows, self.policy, self.now, current)[0].row['id'])
         pack = self.pack(rows, current)
         self.assertEqual(catch['text'], pack['style_samples'][0]['text'])
         self.assertNotIn('at', pack['style_samples'][0])
@@ -169,7 +177,70 @@ class LearningTests(unittest.TestCase):
         pack = build_pack(window, {}, current, now=self.now)
         self.assertFalse(any('lead_in' in r for r in pack['style_samples']))
         window.forget(source['member'])
-        self.assertFalse(any(lead for _, lead, _ in style_examples(list(window.rows), self.policy, self.now, current)))
+        self.assertFalse(any(e.lead for e in style_examples(list(window.rows), self.policy, self.now, current)))
+
+    def test_matching_scene_precedes_identity_and_compares_incoming_intent(self):
+        source = self.row('这游戏好不好玩', 'source', 'STRANGER', ago=300)
+        reply = self.row('还行，打完能退', 'reply', 'B', ago=295,
+                         quote={'id': 'source', 'text': source['text']})
+        same = self.row('晚饭一起去吃吗', 'same', 'A', ago=10)
+        imitation = self.row('这游戏好不好玩', 'imitation', 'C', ago=5,
+                             quote={'id': 'same', 'text': same['text']})
+        current = self.row('那个游戏好不好玩', 'current', 'A', directed=True)
+        selected = style_examples([source, reply, same, imitation, current], self.policy, self.now, current)
+        self.assertEqual('reply', selected[0].row['id'])
+
+    def test_nearby_keeps_fragment_order_without_claiming_reply_or_crossing_boundaries(self):
+        a = self.row('我就看了一眼', 'a', 'A', ago=25)
+        b = self.row('睡醒了', 'b', 'B', ago=20)
+        c = self.row('然后就买了', 'c', 'A', ago=15)
+        sample = next(e for e in style_examples([a, b, c], self.policy, self.now) if e.row['id'] == 'c')
+        self.assertEqual(['a', 'b'], [r['id'] for r in sample.context])
+        self.assertIsNone(sample.lead)
+        self.assertEqual('single', sample.link)
+        pack_sample = self.pack([a, b, c])['style_samples'][0]
+        self.assertEqual([a['text'], b['text']], [r['text'] for r in pack_sample['nearby']])
+        for barrier in ({**b, 'self': True}, {**b, 'command': True}, {**b, 'sender': 'AUTO'}):
+            sample = next(e for e in style_examples([a, barrier, c], self.policy, self.now, excluded={'AUTO'})
+                          if e.row['id'] == 'c')
+            self.assertFalse(sample.context)
+        no_context = replace(self.policy, style_context_messages=0)
+        self.assertTrue(all(not e.context for e in style_examples([a, b, c], no_context, self.now)))
+        aged = [{**a, 'at': self.now-120}, {**b, 'at': self.now-90}, c]
+        self.assertFalse(next(e for e in style_examples(aged, self.policy, self.now) if e.row['id'] == 'c').context)
+
+    def test_short_reactions_need_context_and_cannot_restore_binary_or_repetition(self):
+        self.assertEqual([], style_examples([self.row('嗯', 'alone', 'A')], self.policy, self.now))
+        rows = []
+        for i, reaction in enumerate(('嗯', '哈哈', '哦', '1', '0', '？')):
+            ident = f'source{i}'
+            source = self.row('刚睡醒', ident, f'A{i}', ago=360-i*60)
+            rows.extend([source, self.row(reaction, f'reply{i}', f'B{i}', ago=355-i*60,
+                                         quote={'id': ident, 'text': source['text']})])
+        examples = style_examples(rows, self.policy, self.now)
+        reactions = [e for e in examples if SHORT_REACTION.fullmatch(e.row['text'])]
+        self.assertEqual(1, len(reactions))
+        self.assertTrue(reactions[0].lead)
+        rendered = compact(self.pack(rows)['style_samples'])
+        for invalid in ('"text":"1"', '"text":"0"', '"text":"？"'):
+            self.assertNotIn(invalid, rendered)
+
+    def test_repeated_style_variants_cannot_crowd_out_distinct_speakers(self):
+        rows = [self.row(text, str(i), 'A', ago=900-i*60) for i, text in enumerate((
+            '这个游戏我玩了一整个晚上还是没过', '这个游戏我玩了一整个晚上还是没过。',
+            '这个游戏我玩了一整个晚上还是没过！'))]
+        rows.append(self.row('我连门都没找到', 'different', 'B', ago=10))
+        examples = style_examples(rows, self.policy, self.now)
+        self.assertEqual(2, len(examples))
+        self.assertEqual({'A', 'B'}, {e.row['sender'] for e in examples})
+
+    def test_explicit_style_boundary_is_feedback_without_adding_a_persona(self):
+        ours = self.row('又睡，你是真的能睡', 'ours', '12345', ago=10)
+        correction = self.row('你别老阴阳我', 'fix', 'A', directed=True)
+        pack = self.pack([ours, correction], correction)
+        self.assertEqual('unnatural_style', pack['reply_feedback'][0]['kind'])
+        self.assertEqual([], pack['memory_snapshot'])
+        self.assertEqual([], pack['style_samples'])
 
     def test_feedback_with_unresolved_quote_cannot_attach_to_last_bot_reply(self):
         bot = self.row('随口说一句', 'bot', '12345', ago=10)

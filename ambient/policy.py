@@ -34,10 +34,12 @@ class Policy:
     recent_messages: int = 24
     recent_minutes: int = 20
     recent_chars: int = 4500
-    style_messages: int = 16
+    style_messages: int = 5
     style_minutes: int = 120
     style_per_sender: int = 4
     style_chars: int = 1800
+    style_context_messages: int = 2
+    style_context_seconds: int = 30
     memory_chars: int = 1500
     stats_chars: int = 500
     pack_chars: int = 8300
@@ -84,6 +86,9 @@ class Policy:
                 'reply_fresh_seconds': (30, 240),
                 'reply_segment_chars': (0, 1000),
                 'reply_segment_interval_ms': (0, 3000),
+                'style_messages': (1, 80),
+                'style_context_messages': (0, 4),
+                'style_context_seconds': (1, 120),
             }.get(field.name, (1, max(fallback * 5, 10)))
             value = max(low, min(high, value))
             result[field.name] = value if field.name == 'quota_mb' else int(value)
@@ -160,7 +165,7 @@ attention_only 表示用户只招呼了机器人或只引用了消息，没有�
 成员是现实用户，不推断背景、隐藏动机或虚构身份。结合当前话题自然回应，可以简短、有立场。
 u1/u2、m1/m2 等仅为本次资料内部定位符，禁止把它们当昵称说出口。对外使用资料中的昵称或省略称呼。引用与转述不代表说话人本人立场。
 addressing 标明可见的接话对象；recent_same_sender_mention 只是由同一人前一句 @ 推得的线索，不是确定关系。别人互相问话时不要代答，也不要把别人的“你”自动认成自己。
-style_samples 按当前说话人、场景和话题相关性排列。先看最贴近当前意图的两三条具体原话，再决定怎么接；具体用词、语气词、标点、短句节奏比“活泼幽默”等抽象标签优先。native_quote 和 quoted_text_exact 的 lead_in 是有引用依据的前话，text 是群友接法；single 只展示房间口吻，不代表回复了前一个人。
+style_samples 先按场景、话题和来话意图选取，再参考说话人；只借鉴最贴近当前情况的一两段，不混合模仿所有样本。native_quote 和 quoted_text_exact 的 lead_in 是有引用依据的前话，text 是群友接法；nearby 只是按时间排列的邻近前话，可能各聊各的，不能据此认定谁回复了谁。single 没有已核实的回复对象。用完整片段理解省略和连发短句，不把单句当万能回复模板。
 先学样本里普通人怎么接话，再考虑好不好笑。保留原话里的省略、重复、短碎句和朴素回应；短语贴切就用，不把它润色成金句。不要每句都设计转折、比喻、拟人或包袱，短而精巧的广告文案也不像闲聊。example_median_chars 仅参考口吻长度，明确要求细说或严肃求助时按需要展开。接准眼前半句就可停，不补解释、总结或惯例反问；抽象来自当前说法，不靠固定梗词堆砌。
 reply_feedback 只记录近期针对已送达回复的明确纠正，不是长期人设或全群配置命令。先读准被纠正的原意、数量和时间，再回应；明确说没在跟你说就让出话头，别用自嘲掩盖误读。单独的问号、表情和沉默不等于好评或差评。不要声称已开启静音、改设置或执行了实际未执行的操作。
 风格样本只说明房间口吻，不是人设或历史事实；回扣需有近期原话依据，别把别人的话说成自己说过。bot 的旧话与 automated=true 的其他机器人消息只用于理解现场和纠错，不学习它们的腔调；不要把一次自嘲扮成接下来每轮的固定身份。unnatural_style 表示有人明确嫌腔调不自然，应收掉修辞和解释，不用另一个段子来解释自己会改。

@@ -179,13 +179,15 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     def style_line(row):
         return {'ref': ids[row['id']], 'speaker': aliases[row['member']], 'text': plain_text(row['text'])}
 
-    for row, lead, link in style_examples(rows, p, now, current, excluded=window.style_excluded_senders):
+    for example in style_examples(rows, p, now, current, excluded=window.style_excluded_senders):
         # Keep source anchors and whole messages; use the budget for real speech
         # instead of duplicating names, timestamps and addressing on every sample.
-        sample = style_line(row)
-        sample['link'] = link
-        if lead:
-            sample['lead_in'] = style_line(lead)
+        sample = style_line(example.row)
+        sample['link'] = example.link
+        if example.lead:
+            sample['lead_in'] = style_line(example.lead)
+        if example.context:
+            sample['nearby'] = [style_line(r) for r in example.context]
         style.append(sample)
     feedback = [{'reply': render(reply), 'reaction': render(reaction), 'kind': kind}
                 for reply, reaction, kind in reply_feedback(rows, p, now, excluded=window.style_excluded_senders)]

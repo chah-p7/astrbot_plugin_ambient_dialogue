@@ -132,7 +132,7 @@
               "style_messages": {
                 "type": "int",
                 "description": "口吻样本条数",
-                "default": 16
+                "default": 5
               },
               "style_minutes": {
                 "type": "int",
@@ -148,6 +148,16 @@
                 "type": "int",
                 "description": "口吻样本字数",
                 "default": 1800
+              },
+              "style_context_messages": {
+                "type": "int",
+                "description": "每个样本的邻近前话条数（0 关闭）",
+                "default": 2
+              },
+              "style_context_seconds": {
+                "type": "int",
+                "description": "样本邻近前话最大间隔（秒）",
+                "default": 30
               },
               "memory_chars": {
                 "type": "int",
@@ -307,7 +317,7 @@
       "style_messages": {
         "type": "int",
         "description": "口吻样本条数",
-        "default": 16
+        "default": 5
       },
       "style_minutes": {
         "type": "int",
@@ -323,6 +333,16 @@
         "type": "int",
         "description": "口吻样本字数",
         "default": 1800
+      },
+      "style_context_messages": {
+        "type": "int",
+        "description": "每个样本的邻近前话条数（0 关闭）",
+        "default": 2
+      },
+      "style_context_seconds": {
+        "type": "int",
+        "description": "样本邻近前话最大间隔（秒）",
+        "default": 30
       },
       "memory_chars": {
         "type": "int",

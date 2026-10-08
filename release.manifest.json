@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "ba588d47eb3563e490dedf4bc5ff149518bf4e0e6edafa865c2069f7be34b194"
+      "sha256": "3481b1d4c9e7488c2f01386a0a655d5d81ba291514030765cde1d45e35fb7cd2"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "1365ca5fa8694d844c10e8377ebb106cc9472c17369d3280937fd7f4ce3352f8"
+      "sha256": "1321534d4767dc86f344eeb2e9af219a3bcf042d9191b2e9eb036203415d454c"
     },
     {
       "path": "ambient/__init__.py",
@@ -30,7 +30,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "13747b298178763ab5ee723ee80aa5baab006bf78fae816bdc79b56a61208cf6"
+      "sha256": "df64caced5c9924269681ab1031733e5f64ab3352b76b0d38fe0d742282898f4"
     },
     {
       "path": "ambient/delivery.py",
@@ -46,11 +46,11 @@
     },
     {
       "path": "ambient/learning.py",
-      "sha256": "d88857e5cbfe01af924c4317059f50149312292bd87a40f71ad38663ac4c59b3"
+      "sha256": "f864c15f3141281a417d974bc1395868d0f7ba5010dfb52875895c9244c533ca"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "5d66c917c84c5a1baf531a60a840a18bc24376c7fa29aaae13f51f415b85f6cd"
+      "sha256": "13d93498b0cab4132098378bdbd6f4c734f104732f44cbbe34c81c6d9f181ff5"
     },
     {
       "path": "ambient/runtime.py",
@@ -69,8 +69,12 @@
       "sha256": "ce26be219c3b2f2f3e446e780bd26af723a5e5b43964205da28c388d5620248a"
     },
     {
+      "path": "docs/STYLE_EVALUATION.md",
+      "sha256": "2ab22f445b0a706beba467dbe66e67cc00da2bbbf6e6c8ea4b4df3f72f279ff8"
+    },
+    {
       "path": "docs/THIRD_PARTY.md",
-      "sha256": "6e84e91fba85f9a1985896364c41d2f0b057f8d70e2e0203e4bf39398e1ee467"
+      "sha256": "2caaf3188a47859c8cd368be3cdeca68921d4c02d2c31b039e8f9bae75358085"
     },
     {
       "path": "main.py",
@@ -78,7 +82,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "08b2085c3f8fd75525ca7803bd0ed4aa6ad982d6403cf77e985f0a884b00818d"
+      "sha256": "d822557c1201d6cd61ec7e87c4204d3d0f298dece817b6252f7bf0bedaf5da80"
     },
     {
       "path": "requirements.txt",
@@ -94,11 +98,15 @@
     },
     {
       "path": "tests/test_learning.py",
-      "sha256": "590b97c932893c00f24d360922945c805bbe7a906e1abce73b0207759c3859a5"
+      "sha256": "813fcf2cc94f561ef97384bc26d01b614ad5e096594628e5f942f4f48e184fb2"
     },
     {
       "path": "tests/test_native.py",
       "sha256": "1b5ffba5dd1de57667ab026c3b57c4b2949ad9541c5d9741611f3ac50abf0b77"
+    },
+    {
+      "path": "tests/test_style_eval.py",
+      "sha256": "214b336ed5b75ebcb53c90d5b12050057035996fcd1306dc991e5caa2b249dda"
     },
     {
       "path": "tests/test_unified.py",
@@ -106,7 +114,11 @@
     },
     {
       "path": "tools/build_schema.py",
-      "sha256": "0ec727e7ee442922af2f744ce5c236b1331e8be26b2ccb4970925530da821e0b"
+      "sha256": "5eda410d57878e08fd1f1ab7a61b8447e0efb027a2b90d526da919bf516f8602"
+    },
+    {
+      "path": "tools/evaluate_style.py",
+      "sha256": "329728cfeebfb5736411a5760a422800f7235c0a6250a6a217fd282527c25ff3"
     },
     {
       "path": "tools/migrate_light.py",
