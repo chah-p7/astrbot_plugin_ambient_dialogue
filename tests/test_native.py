@@ -23,6 +23,36 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_sticker_upload_does_not_send_or_consume_sequence(self):
+        from ambient.transport import upload_qq_image
+        self.response = {'file_info': 'native-file', 'file_uuid': 'upload-id', 'ttl': 600}
+        media = await upload_qq_image(self.platform, self.route.group, b'test-image')
+        self.assertEqual({'file_info': 'native-file'}, media)
+        upload = self.calls[0]
+        self.assertTrue(upload['url'].endswith('/v2/groups/GROUP_A/files'))
+        self.assertIs(upload['json']['srv_send_msg'], False)
+        self.assertNotIn('msg_id', upload['json'])
+        self.assertNotIn('msg_seq', upload['json'])
+        self.assertFalse(upload['allow_redirects'])
+        self.response = {'id': 'image-receipt'}
+        gate = AsyncMock(return_value=10002)
+        receipt = await Transport(self.ctx, self.event, self.route).send('笑死', gate, media=media)
+        self.assertEqual('image-receipt', receipt)
+        self.assertEqual(7, self.calls[1]['json']['msg_type'])
+        self.assertEqual(media, self.calls[1]['json']['media'])
+        self.assertEqual(10002, self.calls[1]['json']['msg_seq'])
+        self.assertEqual('m1', self.calls[1]['json']['msg_id'])
+        gate.assert_awaited_once()
+
+    async def test_native_sticker_invalid_upload_never_posts_message(self):
+        from ambient.transport import upload_qq_image
+        for response in ({'id': 'not-a-file'}, {'file_info': 'x', 'code': 22009}, {'file_info': ''}):
+            self.response = response
+            with self.assertRaises(ValueError):
+                await upload_qq_image(self.platform, self.route.group, b'image')
+        self.assertEqual(3, len(self.calls))
+        self.assertTrue(all(c['url'].endswith('/files') for c in self.calls))
+
     async def test_real_request_roundtrip_preserves_persona_and_does_not_save_ambient(self):
         import astrbot
         from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints, CheckpointMessageSegment, CheckpointData

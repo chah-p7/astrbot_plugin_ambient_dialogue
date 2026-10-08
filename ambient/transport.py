@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import base64
 from functools import lru_cache
 import hashlib
 import inspect
@@ -43,6 +44,32 @@ def official_client(platform):
     return client
 
 
+async def upload_qq_image(platform, group, png, check=lambda: None):
+    """Upload only: srv_send_msg=False never posts an unsolicited QQ message."""
+    from aiohttp import ClientTimeout
+    from botpy.http import Route as QQRoute
+    client = official_client(platform)
+    await client.http.check_session()
+    check()
+    if official_client(platform) is not client:
+        raise ValueError('qq_client_changed')
+    route = QQRoute('POST', '/v2/groups/{group_openid}/files', group_openid=group)
+    route.is_sandbox = client.http.is_sandbox
+    if not png or len(png) > 2*1024*1024:
+        raise ValueError('sticker_upload_size')
+    async with client.http._session.request(method=route.method, url=route.url,
+            headers=client.http._headers, timeout=ClientTimeout(total=15), allow_redirects=False,
+            json={'file_type': 1, 'file_data': base64.b64encode(png).decode(),
+                  'srv_send_msg': False}) as response:
+        if response.status != 200:
+            raise ValueError('sticker_upload_unconfirmed')
+        data = await response.json()
+        if (not isinstance(data, dict) or any(k in data for k in ('code', 'error', 'retcode'))
+                or not isinstance(data.get('file_info'), str) or not 0 < len(data['file_info']) <= 16384):
+            raise ValueError('sticker_upload_unconfirmed')
+        return {'file_info': data['file_info']}
+
+
 class Transport:
     def __init__(self, context, event, route, *, now=None):
         now = time.time() if now is None else now
@@ -65,7 +92,13 @@ class Transport:
                 or route_for(self.context, self.event) != self.route):
             raise ValueError('transport_route_expired_or_changed')
 
-    async def send(self, text, before_send):
+    async def prepare_image(self, png):
+        self.check()
+        if self.route.adapter == 'qq_official':
+            return await upload_qq_image(self.platform, self.route.group, png, self.check)
+        return {'type': 'image', 'data': {'file': 'base64://'+base64.b64encode(png).decode()}}
+
+    async def send(self, text, before_send, *, media=None):
         self.check()
         if self.route.adapter == 'aiocqhttp':
             from aiocqhttp import CQHttp
@@ -77,8 +110,11 @@ class Transport:
                 raise ValueError('onebot_account_mismatch')
             await before_send()
             self.check()
+            message = ([{'type': 'text', 'data': {'text': text}}] if text else [])
+            if media:
+                message.append(media)
             data = await client.call_action(action='send_group_msg', self_id=int(self.route.account),
-                group_id=int(self.route.group), message=[{'type': 'text', 'data': {'text': text}}])
+                group_id=int(self.route.group), message=message)
             mid = data.get('message_id') if isinstance(data, dict) else None
             if isinstance(mid, bool) or not isinstance(mid, (str, int)) or not str(mid) or any(k in data for k in ('status', 'retcode')):
                 raise ValueError('onebot_receipt_unconfirmed')
@@ -110,6 +146,7 @@ class Transport:
                 return data
 
         data = await BotAPI(SimpleNamespace(request=request)).post_group_message(
-            group_openid=self.route.group, content=text, msg_type=0, msg_id=self.anchor,
+            group_openid=self.route.group, content=text, msg_type=7 if media else 0, msg_id=self.anchor,
+            **({'media': media} if media else {}),
             msg_seq=10001+int(stable_id(self.route.key, self.anchor, text)[:8], 16) % 2147470000)
         return data['id']

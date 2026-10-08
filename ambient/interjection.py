@@ -9,6 +9,7 @@ from .context import build_pack, compact
 from .delivery import send_reply_parts
 from .policy import SYSTEM_RULES, noise, reply_rejection, stable_id
 from .transport import Transport
+from .stickers import STICKER_RULE, parse_sticker
 from .learning import mentions
 from .search import generate, settings_id
 
@@ -107,6 +108,7 @@ class Interjections:
                 state.outcome = 'normal_reply_pending_or_stale'
                 return
             pack = build_pack(window, snap, current, now=time.time())
+            offered_stickers = rt.stickers.add_choices(route, pack)
 
             async def draft_guard():
                 _, _, current_identity = await self.identity(route, event)
@@ -120,7 +122,7 @@ class Interjections:
 
             state.checks += 1
             response = await asyncio.wait_for(generate(rt.context, event,
-                chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+
+                chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+(STICKER_RULE if offered_stickers else '')+
                 '\n你正在判断是否自然接入群聊。结合接话对象和近期反馈，只有读懂原意且有自然的接法才说；普通确认、办事问答和对别人的邀约可以安静旁听。'
                 '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
                 '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
@@ -134,7 +136,9 @@ class Interjections:
                 state.outcome = 'silent'
                 return
             text = decision.get('text', '').strip() if isinstance(decision.get('text'), str) else ''
-            rejection = reply_rejection(text, current, window, interject=True)
+            text, selected = parse_sticker(text, offered_stickers)
+            sticker = rt.stickers.selected(route, selected, offered_stickers)
+            rejection = reply_rejection(text, current, window, interject=True) if text or not sticker else ''
             if rejection or len(text) > p.interject_max_chars or text.startswith('/'):
                 state.outcome = rejection or 'invalid_draft'
                 return
@@ -145,10 +149,12 @@ class Interjections:
                 nonlocal claimed
                 await draft_guard()
                 # Synchronous, short transaction: no await between final check and claim.
-                if not claimed and not store.claim_interjection(anchor, stable_id(text), snap['revision']):
+                if not claimed and not store.claim_interjection(anchor, stable_id(text, selected), snap['revision']):
                     raise ValueError('draft_consumed_or_memory_changed')
-                rejection = reply_rejection(text, current, window, interject=True)
-                if rejection or (not claimed and not store.claim_delivery(current['id'], stable_id(text))):
+                rejection = reply_rejection(text, current, window, interject=True) if text or not sticker else ''
+                if sticker and not rt.stickers.selected(route, selected, offered_stickers):
+                    raise ValueError('sticker_no_longer_available')
+                if rejection or (not claimed and not store.claim_delivery(current['id'], stable_id(text, selected))):
                     raise ValueError(rejection or 'duplicate_delivery')
                 claimed = True
                 sequence = store.claim_qq_part(current['id']) if route.adapter == 'qq_official' else None
@@ -164,6 +170,7 @@ class Interjections:
             state.outcome = 'preparing_send'
             async with rt.send_locks.setdefault(route.key, asyncio.Lock()):
                 await send_reply_parts(transport, text, p, before_send, record_part,
+                    sticker=sticker,
                     max_parts=store.remaining_qq_parts(current['id']) if route.adapter == 'qq_official' else None)
             state.outcome = 'confirmed'
             rt.delivery_audit(route, current, 'interjection', confirmed_parts)

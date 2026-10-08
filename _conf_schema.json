@@ -34,6 +34,32 @@
             "description": "自然插话",
             "default": false
           },
+          "stickers_enabled": {
+            "type": "bool",
+            "description": "群表情采集与发送",
+            "default": false,
+            "hint": "只采集本群实际收到的图片，按内容去重和频次入库；默认关闭。管理入口见插件 Pages 的 stickers。"
+          },
+          "stickers_top": {
+            "type": "int",
+            "description": "本群可用表情数量",
+            "default": 100
+          },
+          "stickers_min_occurrences": {
+            "type": "int",
+            "description": "图片至少出现几次才审核入库",
+            "default": 2
+          },
+          "stickers_quota_mb": {
+            "type": "int",
+            "description": "本群表情文件额度（MiB，16～512）",
+            "default": 64
+          },
+          "stickers_caption_provider": {
+            "type": "string",
+            "description": "表情图片理解模型（留空沿用本群图片转述模型）",
+            "default": ""
+          },
           "style_excluded_senders": {
             "type": "list",
             "description": "其他机器人账号（不学口吻）",

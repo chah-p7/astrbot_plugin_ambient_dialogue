@@ -9,6 +9,7 @@ from astrbot.core.agent.message import TextPart
 from astrbot.core.provider.entities import ProviderRequest
 
 from .ambient.runtime import Runtime
+from .ambient.sticker_page import StickerPage
 
 
 class AmbientDialogue(Star):
@@ -16,6 +17,7 @@ class AmbientDialogue(Star):
         super().__init__(context)
         self.runtime = Runtime(StarTools.get_data_dir('astrbot_plugin_ambient_dialogue'), context, config)
         self.worker = None
+        self.sticker_page = StickerPage(self.runtime)
 
     async def initialize(self):
         await self.runtime.initialize()

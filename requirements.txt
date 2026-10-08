@@ -1,1 +1,2 @@
-# Runtime dependencies are supplied by AstrBot 4.26.7.
+# AstrBot 4.26.7 also supplies Pillow; declare the direct image dependency.
+Pillow>=11.2.1

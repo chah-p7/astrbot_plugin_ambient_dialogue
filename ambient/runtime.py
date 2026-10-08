@@ -15,6 +15,7 @@ from .policy import Policy, REPLY_FAILURE_NOTICE, SYSTEM_RULES, candidate, norma
 from .store import Store
 from .transport import Transport
 from .search import generate, settings_id
+from .stickers import Stickers, STICKER_RULE, parse_sticker
 
 
 logger = logging.getLogger('astrbot')
@@ -40,6 +41,7 @@ class Runtime:
         self.injected = 0
         self.captured = 0
         self.interjections = Interjections(self)
+        self.stickers = Stickers(self)
         self.closed = False
 
     def settings(self, route):
@@ -176,6 +178,7 @@ class Runtime:
                     # gate, without inventing user text or bypassing Persona.
                     event.set_extra('provider_request', request_type(prompt=row['text']))
         if row and await self.record(route, row):
+            self.stickers.observe(route, event, row)
             self.interjections.observe(route, event, row, now=time.time())
 
     async def prepare(self, event):
@@ -210,7 +213,9 @@ class Runtime:
             if item:
                 status = 'not_saved_storage_full_or_invalid'
         snap = await asyncio.to_thread(store.snapshot)
-        return build_pack(window, snap, row, now=time.time(), memory_status=status)
+        pack = build_pack(window, snap, row, now=time.time(), memory_status=status)
+        event.set_extra('ambient_sticker_choices', self.stickers.add_choices(route, pack))
+        return pack
 
     async def inject(self, event, request, part_type):
         pack = await self.prepare(event)
@@ -224,6 +229,8 @@ class Runtime:
         system = request.system_prompt or ''
         if SYSTEM_RULES not in system:
             system = system+'\n'+SYSTEM_RULES
+        if pack.get('sticker_choices') and STICKER_RULE not in system:
+            system += STICKER_RULE
         request.extra_user_content_parts, request.system_prompt = parts, system
         # The native conversation remains an archive. Both paths now use the
         # same bounded group window; tools still run within the current request.
@@ -243,7 +250,7 @@ class Runtime:
     async def confirmed(self, route, current, text, receipt, source):
         row = {'id': receipt, 'sender': route.account, 'member': route.member(route.account),
                'name': 'bot', 'text': normalized(text)[:1800], 'at': time.time(), 'self': True,
-               'command': False, 'attachment': False, 'mentions': [], 'directed': False,
+               'command': False, 'attachment': '[表情包：' in text, 'mentions': [], 'directed': False,
                'source': source, 'quote': {'id': current['id'], 'sender': current['sender'],
                                           'text': current['text'][:240]}}
         await self.record(route, row)
@@ -261,6 +268,7 @@ class Runtime:
                 store, window = await self.ensure(route)
                 text = ''.join(str(p.text) for p in chain.chain if type(p).__name__ == 'Plain').strip()
                 plain = all(type(p).__name__ in {'Plain', 'Reply', 'At'} for p in chain.chain)
+                sticker = None
                 attempted = False
                 claimed = False
                 confirmed_parts = 0
@@ -275,9 +283,11 @@ class Runtime:
                         reason = 'stale_before_send'
                     elif text:
                         reason = reason or self.output_rejection(event, text, row, window)
+                    if sticker and not self.stickers.selected(route, sticker['id'], event.get_extra('ambient_sticker_choices') or []):
+                        reason = 'sticker_no_longer_available'
                     if reason:
                         raise ValueError(reason)
-                    if not claimed and not store.claim_delivery(row['id'], stable_id(text or str(chain))):
+                    if not claimed and not store.claim_delivery(row['id'], stable_id(text if plain else str(chain), sticker['id'] if sticker else '')):
                         raise ValueError('duplicate_delivery')
                     claimed = True
                     sequence = store.claim_qq_part(row['id']) if route.adapter == 'qq_official' else None
@@ -294,14 +304,17 @@ class Runtime:
 
                 try:
                     if plain:
-                        if not text:
-                            return
                         # Also covers buffered streaming fragments. Tool sends
                         # before agent completion retain the original guard.
                         if event.get_extra('ambient_agent_done'):
-                            text = await self.checked_reply(event, route, text)
+                            text, sticker = await self.checked_sticker_reply(event, route, text)
+                        else:
+                            text, _ = parse_sticker(text, [])
+                        if not text and not sticker:
+                            return
                         receipts = await send_reply_parts(Transport(self.context, event, route), text,
                             self.policy(route), guard, record_part,
+                            sticker=sticker,
                             max_parts=store.remaining_qq_parts(row['id']) if route.adapter == 'qq_official' else None)
                         delivered = {'id': receipts[-1]}
                         if len(receipts) > 1:
@@ -420,6 +433,22 @@ class Runtime:
         self.audit(route, row, outcome, reason)
         return candidate_text
 
+    async def checked_sticker_reply(self, event, route, text):
+        offered = event.get_extra('ambient_sticker_choices') or []
+        clean, selected = parse_sticker(text, offered)
+        selected = selected or event.get_extra('ambient_selected_sticker') or ''
+        sticker = self.stickers.selected(route, selected, offered)
+        if clean or not sticker:
+            clean = await self.checked_reply(event, route, clean)
+            clean, repaired_selection = parse_sticker(clean, offered)
+            if repaired_selection:
+                sticker = self.stickers.selected(route, repaired_selection, offered)
+            if not clean and not sticker:
+                clean = REPLY_FAILURE_NOTICE
+                event.set_extra('ambient_reply_notice', True)
+        event.set_extra('ambient_selected_sticker', sticker['id'] if sticker else '')
+        return clean, sticker
+
     async def response(self, event, response):
         row = event.get_extra('ambient_reply_row')
         if not row:
@@ -431,7 +460,10 @@ class Runtime:
         text = str(getattr(response, 'completion_text', '') or '')
         if text and not reason:
             try:
-                response.completion_text = await self.checked_reply(event, route, text)
+                clean, sticker = await self.checked_sticker_reply(event, route, text)
+                # Keep an image-only result nonempty through the host text pipeline.
+                # Only our installed sender consumes this request-local marker.
+                response.completion_text = clean or ('[[sticker:'+sticker['id']+']]' if sticker else '')
             except ValueError as exc:
                 reason = error_code(exc)
             # Repair time counts toward the same incoming-message lifetime.
@@ -501,6 +533,7 @@ class Runtime:
                 self.errors += 1
             self.next_maintenance[key] = now+store.policy.batch_seconds
         await self.interjections.tick(now)
+        self.stickers.tick()
 
     def status(self):
         return {'captured': self.captured, 'injected': self.injected, 'errors': self.errors,
@@ -513,3 +546,4 @@ class Runtime:
     async def close(self):
         self.closed = True
         await self.interjections.close()
+        await self.stickers.close()

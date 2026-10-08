@@ -62,13 +62,24 @@ def split_reply(text, target=80):
     return parts
 
 
-async def send_reply_parts(transport, text, policy, before_send, confirmed, *, max_parts=None):
+async def send_reply_parts(transport, text, policy, before_send, confirmed, *, max_parts=None, sticker=None):
     """Caller owns the group lock and a durable claim for the entire draft.
 
     Every part repeats the caller's freshness/config checks at the HTTP boundary.
     Any uncertain part stops the sequence; no retry or automatic resumption.
     """
     parts = split_reply(text, policy.reply_segment_chars)
+    media = None
+    if sticker:
+        # Upload is not a visible send and consumes no passive-reply slot.
+        # Upload failure may fall back to text; an uncertain message send never retries.
+        try:
+            media = await asyncio.wait_for(transport.prepare_image(sticker['data']), 20)
+        except (ValueError, TimeoutError, OSError):
+            if not parts:
+                raise
+        if media and not parts:
+            parts = ['']
     if max_parts is not None:
         if max_parts < 1:
             raise ValueError('qq_reply_slots_exhausted')
@@ -80,7 +91,10 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
     for index, part in enumerate(parts):
         if index and policy.reply_segment_interval_ms:
             await asyncio.sleep(policy.reply_segment_interval_ms / 1000)
-        receipt = await asyncio.wait_for(transport.send(part, before_send), 20)
-        await confirmed(part, receipt)
+        last_media = media if index == len(parts)-1 else None
+        receipt = await asyncio.wait_for(transport.send(part, before_send, media=last_media)
+                                        if last_media else transport.send(part, before_send), 20)
+        recorded = part + (' [表情包：'+sticker['caption']+']' if last_media else '')
+        await confirmed(recorded.strip(), receipt)
         receipts.append(receipt)
     return receipts

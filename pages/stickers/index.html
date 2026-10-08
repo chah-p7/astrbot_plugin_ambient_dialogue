@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>群表情库</title><link rel="stylesheet" href="./style.css"></head>
+<body><main><h1>群表情库</h1><p>按本群近 90 天实际收到的图片去重统计，取频次最高的 100 张。普通照片、截图和私人信息不自动入库。QQ 官方接口使用静态预览图。</p>
+<label>群 <select id="group" aria-label="群"></select></label>
+<div class="actions"><button id="enable">开启本群表情</button><button id="import">导入已有群历史</button><button id="refresh">刷新</button><button id="probe">检查 QQ 图片上传（不发消息）</button></div>
+<p id="error" role="alert"></p><pre id="status" role="status">正在连接…</pre>
+<p class="muted">计数只代表机器人实际收到且可取回的图片，不代表 QQ 完整群历史。缺少消息编号的旧档案保守去重；没有图片文件时不会补造。达到频次门槛后才进行一次图片审核和标签生成，选择表情不增加回复模型调用。</p>
+<div id="items"></div><div class="actions"><button id="prev">上一页</button><span id="page"></span><button id="next">下一页</button></div>
+</main><script type="module" src="./app.js"></script></body></html>

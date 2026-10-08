@@ -6,7 +6,7 @@
     },
     {
       "path": ".github/workflows/tests.yml",
-      "sha256": "56a7df85b2d83addd3a3ec9611401c894cb9441cd3ae487e25b5b8d3c1ce89b5"
+      "sha256": "0682df4af43ad3ba038e3ffb1e182aa419c2969cbb380ee77fadab6fb4bf7de9"
     },
     {
       "path": ".gitignore",
@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "f3b80438f8f5f753e8f967e23326f823f16134b641d74bdf7b34912757e6429a"
+      "sha256": "8fc0fbf674cf188f4604cc4a95caed48a29abd1d53b36050c405da82be9c4571"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "1321534d4767dc86f344eeb2e9af219a3bcf042d9191b2e9eb036203415d454c"
+      "sha256": "8c636449b36d53a6b53af678f09e2eef2ce88fe2ddc1f659124fac852630aed2"
     },
     {
       "path": "ambient/__init__.py",
@@ -34,7 +34,7 @@
     },
     {
       "path": "ambient/delivery.py",
-      "sha256": "a3460ce1fc2ebc08d0134a6ff981955d561fb2a3d5161892113cb6f72ce5763e"
+      "sha256": "ebfb05501553bf5782f34bada35d3d87a29b81da4a643761afcb2276d19f535e"
     },
     {
       "path": "ambient/host.py",
@@ -42,7 +42,7 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "56d191f35a79c58c87d6e36afc18dfd294d8921e90e0b9f665832e18b079199e"
+      "sha256": "60a3ec893d23e1deb300ac3ab45a0cccbad46e7d51500993e3bfc3a3fece7816"
     },
     {
       "path": "ambient/learning.py",
@@ -54,11 +54,23 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "398a7ab94881bea4dbd7a201d8090785139f29c62d5dde2422026756ed212bbb"
+      "sha256": "64b5dce5e7756ef468488c3e468e141133588573a017404fdd762088c0f75041"
     },
     {
       "path": "ambient/search.py",
       "sha256": "b209cc522426b8ea446f290dde961d9c434f494c9c741d0df8d2179953f864f4"
+    },
+    {
+      "path": "ambient/sticker_history.py",
+      "sha256": "0b4488f8d0e0ab49555927536570e3343a80c533c516a228e2d878812119ff09"
+    },
+    {
+      "path": "ambient/sticker_page.py",
+      "sha256": "118687f822749a9149ef5bd0771547e001fba0578e7e6ff4c1a2866dcb91e41e"
+    },
+    {
+      "path": "ambient/stickers.py",
+      "sha256": "901a106ff693a877d05700bb205011ddaeba0ca283732746140315310e5589a2"
     },
     {
       "path": "ambient/store.py",
@@ -66,7 +78,7 @@
     },
     {
       "path": "ambient/transport.py",
-      "sha256": "89cbe5c2e24926fd23ef5756ceadacb8e2df70411a4861eab71172c50aff33b5"
+      "sha256": "cae22f590bb34367dedc0b408b2ef4eb545e56317381e0ec5c610e3bc50cfc7b"
     },
     {
       "path": "docs/MIGRATION.md",
@@ -82,15 +94,27 @@
     },
     {
       "path": "main.py",
-      "sha256": "c72b3fa05f1588d61c5bccfa54cf1be1951bfed9696c57c0b6972d1d439a8097"
+      "sha256": "3f064a25598aea6a23dec4597f4d9ddf52434be9c1f316624833c5350a95e639"
     },
     {
       "path": "metadata.yaml",
-      "sha256": "6e6e7ec28ce80a3e19c4167ca766f0ca10eda4dccd4d1947ac15581cbcb67368"
+      "sha256": "0cf708a67062d2013661a263b4c6850d753cfe24efd04c8cb6e79d5cfe4aa72a"
+    },
+    {
+      "path": "pages/stickers/app.js",
+      "sha256": "5bfbda8617c75056f8ad97f380c0525cb32e3f1b014900c9cc6b44821121d394"
+    },
+    {
+      "path": "pages/stickers/index.html",
+      "sha256": "d918db85555a1ff351ce3c55d3e4bbf026564b844478f262056080e064b16e85"
+    },
+    {
+      "path": "pages/stickers/style.css",
+      "sha256": "7b698ea13c6efd646d4744bab56590c7d48a60382f592cc79164455e0ea44f9c"
     },
     {
       "path": "requirements.txt",
-      "sha256": "c2afbe5d378037bcd112a137227645306fc74f0d1e666281a2572675c87abb6e"
+      "sha256": "19f0a9a6e61a6773f1d2438823d0009f26015148bf37fdf78a0c26d03ddfc45a"
     },
     {
       "path": "tests/test_ambient.py",
@@ -106,11 +130,15 @@
     },
     {
       "path": "tests/test_native.py",
-      "sha256": "1b5ffba5dd1de57667ab026c3b57c4b2949ad9541c5d9741611f3ac50abf0b77"
+      "sha256": "213d3c843c202d9ce58086a73cfc9bbaddff05dc5aa569d456d15eb89e386377"
     },
     {
       "path": "tests/test_search.py",
       "sha256": "8a44ca55c85670fc67d8d958ebb9124996f7760c78ca995f7227c3973d5d5d63"
+    },
+    {
+      "path": "tests/test_stickers.py",
+      "sha256": "0bfac134c4e94257d0821365fe62bfe7570c99b50799ae69c43c68bf8e65934f"
     },
     {
       "path": "tests/test_style_eval.py",
@@ -122,7 +150,7 @@
     },
     {
       "path": "tools/build_schema.py",
-      "sha256": "5eda410d57878e08fd1f1ab7a61b8447e0efb027a2b90d526da919bf516f8602"
+      "sha256": "f4d1dd510cfa74fe7096b05ff6f8629ae888da78a77c5e9b639bf814d5812cf9"
     },
     {
       "path": "tools/evaluate_style.py",
