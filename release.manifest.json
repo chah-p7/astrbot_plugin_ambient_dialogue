@@ -62,7 +62,7 @@
     },
     {
       "path": "ambient/sticker_history.py",
-      "sha256": "0b4488f8d0e0ab49555927536570e3343a80c533c516a228e2d878812119ff09"
+      "sha256": "c8e2ee2722ef9687c05bb9e27211de39ee88f8eeb64679d1cd20e9eedf6cfcd3"
     },
     {
       "path": "ambient/sticker_page.py",
@@ -70,7 +70,7 @@
     },
     {
       "path": "ambient/stickers.py",
-      "sha256": "901a106ff693a877d05700bb205011ddaeba0ca283732746140315310e5589a2"
+      "sha256": "7eb7c142e4bf3d3f68d978ef02dadce71627cae5fe51ae4aa86c9867a27046ab"
     },
     {
       "path": "ambient/store.py",

@@ -1,4 +1,5 @@
 """Read only the selected group's retained host history; never scrape other chats."""
+import asyncio
 from datetime import datetime, timezone
 import json
 import time
@@ -25,6 +26,11 @@ async def import_history(stickers, route):
     bank.metadata('history', report)
 
     async def consume(identity, at, parts):
+        if not stickers.enabled(route) or stickers.rt.closed:
+            raise ValueError('group_disabled')
+        if report['messages'] >= 20000:
+            report['truncated'] = True
+            return
         report['messages'] += 1
         for source in set(image_sources(parts)):
             report['images'] += 1
@@ -81,6 +87,9 @@ async def import_history(stickers, route):
                     identity = row.get('message_id') or 'archive:'+stable_id(parts, row.get('timestamp'))
                     await consume(str(identity), at, parts)
         report['state'] = 'complete'
+    except asyncio.CancelledError:
+        report['state'] = 'cancelled'
+        raise
     except Exception as exc:
         report['state'], report['error'] = 'failed', type(exc).__name__
     finally:
