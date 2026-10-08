@@ -91,9 +91,13 @@ class Transport:
             await client.http.check_session()
             if official_client(self.platform) is not client:
                 raise ValueError('qq_client_changed')
-            await before_send()
+            sequence = await before_send()
             self.check()
             route.is_sandbox = client.http.is_sandbox
+            if isinstance(sequence, int) and not isinstance(sequence, bool):
+                # Allocated durably at the final send gate. Identical parts
+                # still need distinct msg_id + msg_seq pairs in QQ.
+                kwargs['json']['msg_seq'] = sequence
             # Local facade retains authentication/pooling while avoiding SDK retry.
             async with client.http._session.request(method=route.method, url=route.url,
                     headers=client.http._headers, timeout=ClientTimeout(total=15),

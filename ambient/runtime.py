@@ -9,6 +9,7 @@ import time
 
 from .context import Route, Window, build_pack, compact, event_message, route_for
 from .interjection import Interjections
+from .delivery import send_reply_parts
 from .host import route_send_tool
 from .policy import Policy, REPLY_FAILURE_NOTICE, SYSTEM_RULES, candidate, normalized, reply_rejection, stable_id
 from .store import Store
@@ -20,7 +21,7 @@ REPLY_ERROR_CODES = frozenset('''invalid_draft internal_alias binary_echo repeat
 route_or_settings_changed stale_before_send duplicate_delivery already_attempted_no_repair
 repair_context_expired_or_changed repair_provider_changed transport_route_expired_or_changed
 qq_native_contract_unavailable qq_reply_anchor_unavailable qq_client_changed
-qq_receipt_unconfirmed onebot_native_client_unavailable onebot_account_mismatch
+qq_receipt_unconfirmed qq_reply_slots_exhausted onebot_native_client_unavailable onebot_account_mismatch
 onebot_receipt_unconfirmed'''.split())
 
 
@@ -91,6 +92,11 @@ class Runtime:
         logger.warning('Ambient reply: group=%s message=%s outcome=%s reason=%s age_seconds=%d',
                        stable_id(route.key)[:12], stable_id(route.key, row['id'])[:12],
                        outcome, reason, max(0, int(time.time()-row['at'])))
+
+    @staticmethod
+    def delivery_audit(route, row, source, parts):
+        logger.info('Ambient delivery: group=%s message=%s source=%s confirmed_parts=%d',
+                    stable_id(route.key)[:12], stable_id(route.key, row['id'])[:12], source, parts)
 
     @staticmethod
     def isolate_followups(event):
@@ -250,10 +256,12 @@ class Runtime:
                 text = ''.join(str(p.text) for p in chain.chain if type(p).__name__ == 'Plain').strip()
                 plain = all(type(p).__name__ in {'Plain', 'Reply', 'At'} for p in chain.chain)
                 attempted = False
+                claimed = False
+                confirmed_parts = 0
                 delivered = None
 
                 async def guard():
-                    nonlocal attempted
+                    nonlocal attempted, claimed
                     reason = event.get_extra('ambient_reply_blocked') or ''
                     if not self.owns(route) or settings != stable_id(self.config) or self.closed:
                         reason = 'route_or_settings_changed'
@@ -263,10 +271,20 @@ class Runtime:
                         reason = reason or self.output_rejection(event, text, row, window)
                     if reason:
                         raise ValueError(reason)
-                    if not store.claim_delivery(row['id'], stable_id(text or str(chain))):
+                    if not claimed and not store.claim_delivery(row['id'], stable_id(text or str(chain))):
                         raise ValueError('duplicate_delivery')
+                    claimed = True
+                    sequence = store.claim_qq_part(row['id']) if route.adapter == 'qq_official' else None
                     attempted = True
                     event.set_extra('ambient_delivery_attempted', True)
+                    return sequence
+
+                async def record_part(part, receipt):
+                    nonlocal confirmed_parts
+                    await self.confirmed(route, row, part, receipt, 'reply')
+                    confirmed_parts += 1
+                    event._has_send_oper = True
+                    self.reply_status(route, 'confirmed')['confirmed'] += 1
 
                 try:
                     if plain:
@@ -276,11 +294,13 @@ class Runtime:
                         # before agent completion retain the original guard.
                         if event.get_extra('ambient_agent_done'):
                             text = await self.checked_reply(event, route, text)
-                        receipt = await asyncio.wait_for(Transport(self.context, event, route).send(text, guard), 20)
-                        await self.confirmed(route, row, text, receipt, 'reply')
-                        event._has_send_oper = True
-                        delivered = {'id': receipt}
-                        self.reply_status(route, 'confirmed')['confirmed'] += 1
+                        receipts = await send_reply_parts(Transport(self.context, event, route), text,
+                            self.policy(route), guard, record_part,
+                            max_parts=store.remaining_qq_parts(row['id']) if route.adapter == 'qq_official' else None)
+                        delivered = {'id': receipts[-1]}
+                        if len(receipts) > 1:
+                            delivered['ids'] = receipts
+                        self.delivery_audit(route, row, 'reply', len(receipts))
                     else:
                         # Native tools may return files. Do not convert them to
                         # text or invent a receipt from the host's None result.
@@ -289,13 +309,18 @@ class Runtime:
                         self.reply_status(route, 'native_media_unconfirmed')
                     self.interjections.suppress(route, now=time.time())
                 except asyncio.CancelledError:
+                    event.set_extra('ambient_reply_blocked', 'cancelled_no_retry')
                     self.reply_status(route, 'cancelled_no_retry')['uncertain'] += int(attempted)
                     raise
                 except Exception as exc:
-                    outcome = 'uncertain_no_retry' if attempted else error_code(exc)
+                    outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if attempted else error_code(exc)
+                    if attempted:
+                        event.set_extra('ambient_reply_blocked', outcome)
                     self.reply_status(route, outcome)['uncertain' if attempted else 'blocked'] += 1
                     self.audit(route, row, 'uncertain' if attempted else 'blocked', outcome)
                 finally:
+                    if confirmed_parts:
+                        self.interjections.suppress(route, now=time.time())
                     if event.get_extra('ambient_agent_done'):
                         self.finish(route, row)
                 return delivered

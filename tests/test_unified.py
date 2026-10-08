@@ -27,7 +27,7 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = context()
         self.route = route_for(self.ctx, Event())
         self.config = {'groups': [{'umo': self.route.umo, 'capture_only': False, 'interject_enabled': True}],
-                       'limits': {'interject_cooldown_seconds': 0}}
+                       'limits': {'interject_cooldown_seconds': 0, 'reply_segment_interval_ms': 0}}
         self.rt = Runtime(self.tmp.name, self.ctx, self.config)
         self.sent, self.error, self.late_change = [], None, None
         owner = self
@@ -81,6 +81,72 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], req.contexts)
         self.assertIsNone(req.conversation)
         self.assertEqual(3, len(self.sent))
+
+    async def test_both_paths_split_and_store_each_real_receipt(self):
+        await self.answer(directed(mid='paragraphs'), '先说这一段。\n\n再说另一段。')
+        await self.interject(Event('换个话题', mid='new-topic'), '这回先歇歇。\n\n下一把再来。')
+        self.assertEqual(['先说这一段。', '再说另一段。', '这回先歇歇。', '下一把再来。'], self.sent)
+        rows = [r for r in self.rt.windows[self.route.key].rows if r['self']]
+        self.assertEqual(self.sent, [r['text'] for r in rows])
+        self.assertEqual(['receipt-1', 'receipt-2', 'receipt-3', 'receipt-4'], [r['id'] for r in rows])
+        self.assertEqual(['paragraphs', 'paragraphs', 'new-topic', 'new-topic'], [r['quote']['id'] for r in rows])
+
+    async def test_partial_failure_keeps_only_confirmed_prefix_and_never_restarts(self):
+        text = '第一段已发。\n\n第二段未知。\n\n第三段别发。'
+        self.late_change = lambda: setattr(self, 'error', TimeoutError() if self.sent else None)
+        event = directed(mid='partial')
+        await self.answer(event, text)
+        self.assertEqual(['第一段已发。', '第二段未知。'], self.sent)
+        self.assertEqual('partial_no_retry', self.rt.replies[self.route.key]['outcome'])
+        self.assertEqual(['第一段已发。'], [r['text'] for r in self.rt.windows[self.route.key].rows if r['self']])
+        # Native follow-on chunks and a new process cannot resend the sequence.
+        await event.send(NS(chain=[Plain('第三段别发。')]))
+        await self.rt.close()
+        self.rt = Runtime(self.tmp.name, self.ctx, self.config)
+        await self.rt.initialize()
+        self.late_change = None
+        self.error = None
+        await self.answer(directed(mid='partial'), text)
+        self.assertEqual(2, len(self.sent))
+        self.assertEqual(3, self.rt.stores[self.route.key].remaining_qq_parts('partial'))
+
+    async def test_config_change_between_parts_prevents_tail(self):
+        def change():
+            if self.sent:
+                self.config['groups'][0]['enabled'] = False
+        self.late_change = change
+        await self.answer(directed(), '第一段。\n\n第二段。')
+        self.assertEqual(['第一段。'], self.sent)
+
+    async def test_new_message_or_memory_change_preempts_remaining_interjection(self):
+        for mode in ('new_message', 'memory'):
+            self.sent.clear()
+            store, _ = await self.rt.ensure(self.route)
+            def change():
+                if self.sent:
+                    if mode == 'new_message':
+                        self.rt.interjections.states[self.route.key].generation += 1
+                    else:
+                        with store.connection() as db:
+                            db.execute('UPDATE meta SET revision=revision+1')
+            self.late_change = change
+            await self.interject(Event('换一件事说', mid=mode), '先说前半句。\n\n后半句等会儿。'+mode)
+            self.assertEqual(['先说前半句。'], self.sent)
+
+    async def test_qq_allowance_is_shared_across_tool_and_final_sends(self):
+        event = directed(mid='tools-and-final')
+        await self.rt.inject(event, request(), Part)
+        for text in ('正在看。', '看完了。'):
+            await event.send(NS(chain=[Plain(text)]))
+        text = '\n\n'.join(f'这是第{i}个结论。' for i in range(6))
+        await self.rt.response(event, NS(completion_text=text))
+        await event.send(NS(chain=[Plain(text)]))
+        self.assertEqual(5, len(self.sent))
+        self.assertEqual(text, '\n\n'.join(self.sent[2:]))
+        self.assertEqual(0, self.rt.stores[self.route.key].remaining_qq_parts(event.message_obj.message_id))
+        # A different incoming message has its own platform allowance.
+        await self.answer(directed(mid='next-anchor'), '下一条消息仍然能正常回复。')
+        self.assertEqual(6, len(self.sent))
 
     async def test_duplicate_native_active_and_stale_queue_stop_before_model(self):
         for event in (Event(), directed(mid='late')):

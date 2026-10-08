@@ -6,7 +6,8 @@ import json
 import time
 
 from .context import build_pack, compact
-from .policy import SYSTEM_RULES, noise, normalized, reply_rejection, stable_id
+from .delivery import send_reply_parts
+from .policy import SYSTEM_RULES, noise, reply_rejection, stable_id
 from .transport import Transport
 from .learning import mentions
 
@@ -89,6 +90,7 @@ class Interjections:
         generation, event, current = state.generation, state.event, state.current
         rt, p = self.runtime, self.runtime.policy(route)
         settings = stable_id(rt.config)
+        confirmed_parts = 0
         try:
             transport = Transport(rt.context, event, route)
             provider, persona, identity = await self.identity(route, event)
@@ -118,42 +120,55 @@ class Interjections:
             if not isinstance(decision, dict) or decision.get('reply') is not True:
                 state.outcome = 'silent'
                 return
-            text = normalized(decision.get('text', '')) if isinstance(decision.get('text'), str) else ''
+            text = decision.get('text', '').strip() if isinstance(decision.get('text'), str) else ''
             rejection = reply_rejection(text, current, window, interject=True)
             if rejection or len(text) > p.interject_max_chars or text.startswith('/'):
                 state.outcome = rejection or 'invalid_draft'
                 return
 
+            claimed = False
+
             async def before_send():
+                nonlocal claimed
                 _, _, current_identity = await self.identity(route, event)
                 if (self.closed or not rt.enabled(route, interject=True) or settings != stable_id(rt.config)
                         or current_identity != identity or state.generation != generation
                         or rt.busy(route)
                         or time.time()-state.last_input > p.interject_fresh_seconds
-                        or time.time() < state.suppressed_until):
+                        or time.time() < state.suppressed_until
+                        or (claimed and store.memory_revision() != snap['revision'])):
                     raise ValueError('draft_preempted')
                 transport.check()
                 # Synchronous, short transaction: no await between final check and claim.
-                if not store.claim_interjection(anchor, stable_id(text), snap['revision']):
+                if not claimed and not store.claim_interjection(anchor, stable_id(text), snap['revision']):
                     raise ValueError('draft_consumed_or_memory_changed')
                 rejection = reply_rejection(text, current, window, interject=True)
-                if rejection or not store.claim_delivery(current['id'], stable_id(text)):
+                if rejection or (not claimed and not store.claim_delivery(current['id'], stable_id(text))):
                     raise ValueError(rejection or 'duplicate_delivery')
+                claimed = True
+                sequence = store.claim_qq_part(current['id']) if route.adapter == 'qq_official' else None
                 state.outcome = 'sending'
+                return sequence
+
+            async def record_part(part, receipt):
+                nonlocal confirmed_parts
+                await rt.confirmed(route, current, part, receipt, 'interjection')
+                confirmed_parts += 1
+                state.sent += 1
 
             state.outcome = 'preparing_send'
             async with rt.send_locks.setdefault(route.key, asyncio.Lock()):
-                receipt = await asyncio.wait_for(transport.send(text, before_send), 20)
-                await rt.confirmed(route, current, text, receipt, 'interjection')
-            state.sent += 1
+                await send_reply_parts(transport, text, p, before_send, record_part,
+                    max_parts=store.remaining_qq_parts(current['id']) if route.adapter == 'qq_official' else None)
             state.outcome = 'confirmed'
+            rt.delivery_audit(route, current, 'interjection', confirmed_parts)
             state.suppressed_until = time.time()+p.interject_cooldown_seconds
         except asyncio.CancelledError:
             state.outcome = 'cancelled_no_retry'
             raise
         except Exception as exc:
             # Never log raw chats, drafts, tokens or adapter exception bodies.
-            state.outcome = 'uncertain_no_retry' if state.outcome == 'sending' else type(exc).__name__
+            state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else type(exc).__name__
             rt.errors += 1
 
     async def close(self):

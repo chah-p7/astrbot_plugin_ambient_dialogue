@@ -49,6 +49,8 @@ class Policy:
     interject_max_chars: int = 240
     reply_fresh_seconds: int = 180
     reply_repair_timeout_seconds: int = 30
+    reply_segment_chars: int = 80
+    reply_segment_interval_ms: int = 600
 
     @property
     def quota_bytes(self):
@@ -80,6 +82,8 @@ class Policy:
                 'pack_chars': (2000, 30000), 'raw_limit': (24, 2000),
                 'interject_fresh_seconds': (30, 240),
                 'reply_fresh_seconds': (30, 240),
+                'reply_segment_chars': (0, 1000),
+                'reply_segment_interval_ms': (0, 3000),
             }.get(field.name, (1, max(fallback * 5, 10)))
             value = max(low, min(high, value))
             result[field.name] = value if field.name == 'quota_mb' else int(value)

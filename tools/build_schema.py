@@ -15,7 +15,7 @@ labels = dict(zip(asdict(Policy()), ['每群存储额度（MiB）', '开始压�
     '口吻样本分钟数', '每人口吻样本条数', '口吻样本字数', '记忆注入字数', '节奏统计字数',
     '总上下文字数', '插话判断间隔（秒）', '插话等待安静（秒）', '插话冷却（秒，可为 0）',
     '插话消息新鲜期（秒）', '插话模型超时（秒）', '插话最大字数', '普通回复消息新鲜期（秒）',
-    '回复修正超时（秒）']))
+    '回复修正超时（秒）', '分条目标字数（0 关闭，代码和链接保持完整）', '分条发送间隔（毫秒）']))
 fields = {key:{'type': 'float' if isinstance(value,float) or key=='quota_mb' else 'int',
     'description': labels[key], 'default': value} for key,value in asdict(Policy()).items()}
 schema = {'groups': {'type':'template_list', 'description':'启用的群', 'default':[],

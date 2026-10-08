@@ -197,6 +197,16 @@
                 "type": "int",
                 "description": "回复修正超时（秒）",
                 "default": 30
+              },
+              "reply_segment_chars": {
+                "type": "int",
+                "description": "分条目标字数（0 关闭，代码和链接保持完整）",
+                "default": 80
+              },
+              "reply_segment_interval_ms": {
+                "type": "int",
+                "description": "分条发送间隔（毫秒）",
+                "default": 600
               }
             }
           }
@@ -362,6 +372,16 @@
         "type": "int",
         "description": "回复修正超时（秒）",
         "default": 30
+      },
+      "reply_segment_chars": {
+        "type": "int",
+        "description": "分条目标字数（0 关闭，代码和链接保持完整）",
+        "default": 80
+      },
+      "reply_segment_interval_ms": {
+        "type": "int",
+        "description": "分条发送间隔（毫秒）",
+        "default": 600
       }
     }
   }

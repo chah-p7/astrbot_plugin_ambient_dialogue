@@ -64,6 +64,8 @@ class Store:
                 INSERT OR IGNORE INTO interjection_gate(id) VALUES(1);
                 CREATE TABLE IF NOT EXISTS delivery_claims (
                     key TEXT PRIMARY KEY, at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS qq_reply_slots (
+                    anchor TEXT PRIMARY KEY, used INTEGER NOT NULL, at REAL NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO meta(id,group_id) VALUES(1,?)', (group,))
             if db.execute('SELECT group_id FROM meta').fetchone()[0] != group:
@@ -254,6 +256,35 @@ class Store:
             row = dict(db.execute('SELECT * FROM interjection_gate WHERE id=1').fetchone())
         return row
 
+    def memory_revision(self):
+        with self.connection() as db:
+            return db.execute('SELECT revision FROM meta').fetchone()[0]
+
+    def remaining_qq_parts(self, anchor, *, now=None):
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            row = db.execute('SELECT used FROM qq_reply_slots WHERE anchor=? AND at>=?',
+                             (stable_id(anchor), now-3600)).fetchone()
+        return max(0, 5-(row[0] if row else 0))
+
+    def claim_qq_part(self, anchor, *, now=None):
+        """QQ allows five replies per incoming message, across tools and parts.
+
+        Allocate before network I/O; uncertain attempts consume a slot too.
+        This counter is not a per-user, hourly or daily conversation quota.
+        """
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('DELETE FROM qq_reply_slots WHERE at<?', (now-3600,))
+            key = stable_id(anchor)
+            row = db.execute('SELECT used FROM qq_reply_slots WHERE anchor=?', (key,)).fetchone()
+            used = row[0] if row else 0
+            if used >= 5:
+                raise ValueError('qq_reply_slots_exhausted')
+            db.execute('INSERT OR REPLACE INTO qq_reply_slots VALUES(?,?,?)', (key, used+1, now))
+        return 10001+used
+
     def claim_interjection(self, anchor, reply_hash, revision, *, now=None):
         """Persist only two hashes and the last attempt time, never chats.
 
@@ -274,6 +305,7 @@ class Store:
 
     def _trim_raw(self, db, now):
         db.execute('DELETE FROM delivery_claims WHERE at<?', (now-3600,))
+        db.execute('DELETE FROM qq_reply_slots WHERE at<?', (now-3600,))
         db.execute('DELETE FROM raw_messages WHERE at<?',
                    (now - self.policy.raw_hours * 3600,))
         if not self.policy.raw_hours:

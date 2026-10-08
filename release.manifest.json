@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "1b692483aebfd984a57230241685b8aa2242d9f4ad19467024dbdf0de3b702a2"
+      "sha256": "a126be1c414c4007e96d987d953f1c0aceb351aab4cc848afa873353058f2ca0"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "60adf938b745f591c3a03316edb307c57819e1249d886ef73334d11e984fa985"
+      "sha256": "692fe3443202d7218bcbeaa9f205d72def248d11e3349aa8cc5770c44c9de693"
     },
     {
       "path": "ambient/__init__.py",
@@ -33,12 +33,16 @@
       "sha256": "3d16d0c4ecc0a8821e2088bfa9b9f5417083b9d247f365c01d04faa9b6e7e3b7"
     },
     {
+      "path": "ambient/delivery.py",
+      "sha256": "a3460ce1fc2ebc08d0134a6ff981955d561fb2a3d5161892113cb6f72ce5763e"
+    },
+    {
       "path": "ambient/host.py",
       "sha256": "f761dc223f30cb83b40d8a85f6c957fe0db9d113c6b94625a0d5e6b95d033dcc"
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "ef0f21db1914c16c3dde0e5c2f24e351fe603f5e66ba37aa2523098dc1c44622"
+      "sha256": "3c1365ac905685e97b292fc745f323222c74917728aae3ce8352b3e708f60cff"
     },
     {
       "path": "ambient/learning.py",
@@ -46,19 +50,19 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "706ff6de4bba1226e549cdcb462882ceb9e90c6e02dba19cf7f84f7fbb9227cf"
+      "sha256": "2046124c30474be56d4fcc9628a4807cf0391e2f87ea743d61934b1ebc3c8683"
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "1bd34295ea4cd618ebd04cadde44cd73f0fab4467074931b8c8f5efbd07b9ce2"
+      "sha256": "174ddf9c486b399fa6a7876713e8bccc14363089f958f6374f6d2c6ccbea2be6"
     },
     {
       "path": "ambient/store.py",
-      "sha256": "ee3993949bc90831f2236748d2b6ba44b6979ca6ea4d169a53dd49b8fad0ee96"
+      "sha256": "045259dd9f0254bf401675dd439a4a150f5fbb2fdd43c13515f582e4661c307a"
     },
     {
       "path": "ambient/transport.py",
-      "sha256": "bdac356546575b0a80761648f3ba97325dedcd5d05c6145b41cd1cbe376bd0a3"
+      "sha256": "89cbe5c2e24926fd23ef5756ceadacb8e2df70411a4861eab71172c50aff33b5"
     },
     {
       "path": "docs/MIGRATION.md",
@@ -74,7 +78,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "84a00cc67d04464dc16a11c7f8107eb1b96469d452d23fbd0bdcc4eb6ba83f50"
+      "sha256": "08b2085c3f8fd75525ca7803bd0ed4aa6ad982d6403cf77e985f0a884b00818d"
     },
     {
       "path": "requirements.txt",
@@ -85,20 +89,24 @@
       "sha256": "49aa8fd79bf54481f43769e047b28c21c2263e4911869a0d919939f8bae90951"
     },
     {
+      "path": "tests/test_delivery.py",
+      "sha256": "76063af43805855c2c762638a09ee35318af60b387f8cb48836b03420af80d7a"
+    },
+    {
       "path": "tests/test_learning.py",
       "sha256": "857e602a60d3d76719f17aa109065cf778d061891f7fd0e632a4cecc268be643"
     },
     {
       "path": "tests/test_native.py",
-      "sha256": "b44067aafe3f3d0d29c22c29bbecd7f49c9a1b401c5e4b76c22fb5c31f72904d"
+      "sha256": "1b5ffba5dd1de57667ab026c3b57c4b2949ad9541c5d9741611f3ac50abf0b77"
     },
     {
       "path": "tests/test_unified.py",
-      "sha256": "dd65f5cc65ebaa4430b1e4cb785f01bda76d83f7fca8f277e1c5775b73b6646e"
+      "sha256": "8bbafd0355e0bdfa2b36ef35ab456c9e3c807b111b36e00a5050203dc36df37a"
     },
     {
       "path": "tools/build_schema.py",
-      "sha256": "5dd47ebedc61921751f0000e3fc0e5e3c627422d899161bc40de5565f6e418b7"
+      "sha256": "e8a0b23194f61b15fe4bc883b0b9261e0163038f1547ed9dce4ce2223200db38"
     },
     {
       "path": "tools/migrate_light.py",

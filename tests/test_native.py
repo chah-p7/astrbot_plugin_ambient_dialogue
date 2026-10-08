@@ -86,7 +86,7 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self,*args): return False
             @property
             def status(self): return owner.status
-            async def json(self): return owner.response
+            async def json(self): return owner.response() if callable(owner.response) else owner.response
         def request(**kwargs):
             self.calls.append(kwargs)
             return Response()
@@ -166,6 +166,57 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(req, ProviderRequest)
                 await rt.inject(self.event, req, TextPart)
                 self.assertTrue(json.loads(req.extra_user_content_parts[-1].text)['ambient_data']['current_message']['attention_only'])
+            finally:
+                await rt.close()
+
+    async def test_native_split_receipts_sequences_and_stream_replay(self):
+        from astrbot.core.agent.message import TextPart
+        from astrbot.core.provider.entities import ProviderRequest, LLMResponse
+        from astrbot.core.message.message_event_result import MessageChain
+        self.event.is_at_or_wake_command = True
+        self.response = lambda: {'id': 'native-'+str(len(self.calls))}
+        text = '第一段可以相同。\n\n第一段可以相同。\n\n第三段继续说。'
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, {'groups':[{'umo':self.route.umo,'capture_only':False}],
+                                       'limits':{'reply_segment_interval_ms':0}})
+            try:
+                await rt.inject(self.event, ProviderRequest(prompt='详细解释'), TextPart)
+                await rt.response(self.event, LLMResponse(role='assistant', completion_text=text))
+                async def chunks():
+                    for chunk in (text[:11], text[11:25], text[25:]):
+                        yield MessageChain().message(chunk)
+                await self.event.send_streaming(chunks())
+                self.assertEqual(3, len(self.calls))
+                self.assertEqual([10001, 10002, 10003], [r['json']['msg_seq'] for r in self.calls])
+                self.assertTrue(all(r['json']['msg_id']=='m1' for r in self.calls))
+                rows = [r for r in rt.windows[self.route.key].rows if r['self']]
+                self.assertEqual(['native-1', 'native-2', 'native-3'], [r['id'] for r in rows])
+                self.assertEqual(text, '\n\n'.join(r['text'] for r in rows))
+                await self.event.send(MessageChain().message(text))
+                self.assertEqual(3, len(self.calls))
+            finally:
+                await rt.close()
+
+    async def test_native_second_part_failure_does_not_replay_first_or_send_third(self):
+        from astrbot.core.agent.message import TextPart
+        from astrbot.core.provider.entities import ProviderRequest, LLMResponse
+        from astrbot.core.message.message_event_result import MessageChain
+        self.event.is_at_or_wake_command = True
+        self.response = lambda: {'id':'native-first'} if len(self.calls)==1 else {'code':22009}
+        text = '前面已发。\n\n中间失败。\n\n后面不发。'
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {'groups':[{'umo':self.route.umo,'capture_only':False}],
+                      'limits':{'reply_segment_interval_ms':0}}
+            rt = Runtime(tmp, self.ctx, config)
+            try:
+                await rt.inject(self.event, ProviderRequest(prompt='说几句'), TextPart)
+                await rt.response(self.event, LLMResponse(role='assistant', completion_text=text))
+                self.assertIsNone(await self.event.send(MessageChain().message(text)))
+                self.assertEqual(2, len(self.calls))
+                self.assertEqual(['前面已发。'], [r['text'] for r in rt.windows[self.route.key].rows if r['self']])
+                self.assertEqual(3, rt.stores[self.route.key].remaining_qq_parts('m1'))
+                await self.event.send(MessageChain().message(text))
+                self.assertEqual(2, len(self.calls))
             finally:
                 await rt.close()
 
