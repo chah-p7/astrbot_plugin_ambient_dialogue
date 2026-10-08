@@ -26,6 +26,8 @@ schema = {'groups': {'type':'template_list', 'description':'启用的群', 'defa
         'enabled': {'type':'bool','description':'启用','default':True},
         'capture_only': {'type':'bool','description':'仅采集验证','default':True},
         'interject_enabled': {'type':'bool','description':'自然插话','default':False},
+        'style_excluded_senders': {'type':'list','description':'其他机器人账号（不学口吻）','default':[],
+            'hint':'填写本群该平台下已确认的机器人稳定成员 ID；QQ 官方为成员 OpenID，OneBot 为 QQ 号。仍保留其近期消息理解现场，不按昵称猜测。'},
         'quota_mb': {'type':'float','description':'本群额度（MiB，0 继承默认）','default':0},
         'limits': {'type':'object','description':'本群参数','items': fields}}}}},
     'limits': {'type':'object','description':'默认参数','items':fields}}

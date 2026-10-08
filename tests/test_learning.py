@@ -179,8 +179,60 @@ class LearningTests(unittest.TestCase):
         correction['quote'].update(id='', text=bot['text'])
         self.assertEqual([(bot, correction, 'misunderstood')], reply_feedback([bot, correction], self.policy, self.now))
 
+    def test_other_bots_stay_in_context_but_cannot_teach_voice_or_rate_replies(self):
+        human = self.row('在家', 'human', 'A', ago=50, name='真人bot爱好者')
+        ours = self.row('我看看', 'ours', '12345', ago=40)
+        other = self.row('你理解错了，这里有一大段自动生成的点评', 'auto', 'AUTO_PRIVATE', ago=30)
+        quoted = self.row('又是这句话', 'quote', 'B', ago=20,
+                          quote={'id': other['id'], 'text': other['text'], 'sender': ''})
+        mention = self.row('<@AUTO_PRIVATE> 快说几句', 'mention', 'C', ago=10)
+        rows = [human, ours, other, quoted, mention]
+        pack = build_pack(Window(self.policy, rows, style_excluded_senders=['AUTO_PRIVATE']), {}, None, now=self.now)
+        self.assertEqual([human['text']], [r['text'] for r in pack['style_samples']])
+        self.assertEqual([], pack['reply_feedback'])
+        other_context = next(r for r in pack['recent_context'] if r['text'] == other['text'])
+        self.assertTrue(other_context['automated'])
+        self.assertNotIn('AUTO_PRIVATE', compact(pack))
+        self.assertEqual(4, pack['rhythm_stats']['median_chars'])
+        self.assertNotIn('automated', next(r for r in pack['recent_context'] if r['text'] == human['text']))
+
+    def test_style_complaints_only_bind_to_our_confirmed_reply(self):
+        ours = self.row('我来说明一下', 'ours', '12345', ago=40)
+        other = self.row('另一个机器人的长回复', 'other', 'AUTO', ago=30)
+        complaint = self.row('说话像机器人，AI味太重了', 'complaint', 'A', ago=20)
+        self.assertEqual([], reply_feedback([ours, other, complaint], self.policy, self.now, excluded={'AUTO'}))
+        direct = {**complaint, 'mentions': ['bot']}
+        self.assertEqual([(ours, direct, 'unnatural_style')], reply_feedback([ours, other, direct], self.policy, self.now))
+        quoted_other = {**complaint, 'quote': {'id': 'other', 'text': other['text'], 'sender': ''}}
+        self.assertEqual([], reply_feedback([ours, other, quoted_other], self.policy, self.now))
+        self.assertEqual([(ours, complaint, 'unnatural_style')], reply_feedback([ours, complaint], self.policy, self.now))
+
 
 class LearningRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_style_exclusion_refreshes_cached_rows_and_is_scoped_to_group(self):
+        with tempfile.TemporaryDirectory() as root:
+            ctx = context()
+            event = Event('自动账号说的话', sender='AUTOMATED')
+            route = route_for(ctx, event)
+            other_route = route_for(ctx, Event(group='GROUP_B'))
+            config = {'groups': [{'umo': route.umo}]}
+            runtime = Runtime(root, ctx, config)
+            try:
+                _, window = await runtime.ensure(route)
+                window.add(event_message(event, route), time.time())
+                self.assertTrue(build_pack(window, {}, None, now=time.time())['style_samples'])
+                config['groups'][0]['style_excluded_senders'] = [' AUTOMATED ']
+                _, refreshed = await runtime.ensure(route)
+                self.assertIs(window, refreshed)
+                self.assertEqual([], build_pack(window, {}, None, now=time.time())['style_samples'])
+                _, other_window = await runtime.ensure(other_route)
+                self.assertFalse(other_window.style_excluded_senders)
+                config['groups'][0]['style_excluded_senders'] = []
+                await runtime.ensure(route)
+                self.assertTrue(build_pack(window, {}, None, now=time.time())['style_samples'])
+            finally:
+                await runtime.close()
+
     async def test_explicit_at_other_member_does_not_schedule_an_interjection(self):
         with tempfile.TemporaryDirectory() as root:
             ctx = context()

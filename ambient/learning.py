@@ -87,10 +87,11 @@ def words(text):
     return set(terms) - {'这个', '那个', '什么', '怎么', '你们', '我们', '是不是', '不是', '一个', '一下'}
 
 
-def style_examples(rows, policy, now, current=None):
+def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
     def eligible(row):
         return (not any(row.get(k) for k in ('self', 'command', 'attachment', 'directed'))
-                and 'bot' not in mentions(row)
+                and row['sender'] not in excluded
+                and not ({'bot', *excluded} & set(mentions(row)))
                 and 0 <= now-row['at'] <= policy.style_minutes*60
                 and (not current or (row['id'] != current['id'] and row['at'] <= current['at']))
                 and len(row['text']) <= 180 and not noise(plain_text(row['text']))
@@ -103,7 +104,7 @@ def style_examples(rows, policy, now, current=None):
         if row['id'] not in available:
             continue
         lead, link = quote_source(row, rows)
-        if lead and lead['self']:
+        if lead and (lead['self'] or lead['sender'] in excluded):
             continue
         if lead and (lead['id'] not in available or len(plain_text(lead['text'])) < 2):
             lead = None
@@ -141,19 +142,20 @@ def style_examples(rows, policy, now, current=None):
     return selected
 
 
-def reply_feedback(rows, policy, now):
+def reply_feedback(rows, policy, now, *, excluded=frozenset()):
     """Bind explicit corrections to a confirmed reply; '?' is never a rating."""
     patterns = (
         ('wrong_addressee', r'没(?:和|跟)你说|不是(?:在)?(?:问|叫|跟|和)你|没你.{0,4}事|别抢答'),
         ('misunderstood', r'理解错|看错了|不是这个意思|答非所问|话都看不明白|胡编|乱编'),
         ('unwelcome_interjection', r'闭嘴|别插话|不要插话|停止.{0,12}(?:输出|发消息)|咋啥事都有你'),
+        ('unnatural_style', r'(?i:ai).{0,3}味|像(?:个)?(?:机器人|客服)|小作文|又.{0,6}(?:说话腔调|这个腔调)|别.{0,6}(?:硬玩梗|解释笑点)'),
     )
     confirmed, selected, seen = {}, [], set()
     for index, row in enumerate(rows):
         if row['self']:
             confirmed[row['id']] = row
             continue
-        if (row.get('command') or row.get('attachment') or len(row['text']) > 180
+        if (row['sender'] in excluded or row.get('command') or row.get('attachment') or len(row['text']) > 180
                 or now-row['at'] > policy.recent_minutes*60):
             continue
         kind = next((kind for kind, pattern in patterns if re.search(pattern, row['text'])), None)
@@ -167,7 +169,7 @@ def reply_feedback(rows, policy, now):
         if reply is None and not row.get('quote'):
             prior = next((r for r in reversed(rows[:index])
                           if not r.get('attachment') and not noise(plain_text(r['text']))), None)
-            if row.get('directed') or '机器人' in row['text'] or (prior and prior['self']):
+            if row.get('directed') or 'bot' in targets or (prior and prior['self']):
                 reply = next(reversed(confirmed.values()), None)
         if reply and 0 <= row['at']-reply['at'] <= 90:
             selected.append((reply, row, kind))

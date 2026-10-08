@@ -122,6 +122,10 @@ class Runtime:
             p = self.policy(route)
             self.stores[route.key].policy = p
             self.windows[route.key].policy = p
+            excluded = self.settings(route).get('style_excluded_senders', [])
+            self.windows[route.key].style_excluded_senders = frozenset(
+                s.strip() for s in excluded if isinstance(s, str) and s.strip()
+            ) if isinstance(excluded, list) else frozenset()
             return self.stores[route.key], self.windows[route.key]
 
     async def initialize(self):

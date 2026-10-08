@@ -108,8 +108,9 @@ def event_message(event, route, *, now=None):
 
 
 class Window:
-    def __init__(self, policy, rows=()):
+    def __init__(self, policy, rows=(), *, style_excluded_senders=()):
         self.policy = policy
+        self.style_excluded_senders = frozenset(style_excluded_senders)
         self.rows = deque(sorted(rows, key=lambda r: r['at']), maxlen=policy.raw_limit)
 
     def add(self, row, now):
@@ -152,6 +153,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             result['source'] = r.get('source', 'interjection')
         if not r['self']:
             result['name'] = r.get('name', '')
+            if r['sender'] in window.style_excluded_senders:
+                result['automated'] = True
         if r.get('attention_only'):
             result['attention_only'] = True
         if r.get('quote'):
@@ -176,7 +179,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     def style_line(row):
         return {'ref': ids[row['id']], 'speaker': aliases[row['member']], 'text': plain_text(row['text'])}
 
-    for row, lead, link in style_examples(rows, p, now, current):
+    for row, lead, link in style_examples(rows, p, now, current, excluded=window.style_excluded_senders):
         # Keep source anchors and whole messages; use the budget for real speech
         # instead of duplicating names, timestamps and addressing on every sample.
         sample = style_line(row)
@@ -185,7 +188,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             sample['lead_in'] = style_line(lead)
         style.append(sample)
     feedback = [{'reply': render(reply), 'reaction': render(reaction), 'kind': kind}
-                for reply, reaction, kind in reply_feedback(rows, p, now)]
+                for reply, reaction, kind in reply_feedback(rows, p, now, excluded=window.style_excluded_senders)]
 
     def bounded(items, limit):
         kept = []
@@ -212,7 +215,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     feedback_rows = bounded(feedback, min(700, p.style_chars//2))
     style_rows = bounded(style, p.style_chars-len(compact(feedback_rows)))
     memory_rows = bounded(memory, p.memory_chars)
-    human = [r for r in rows if not r['self'] and not r['command'] and now-r['at'] <= p.style_minutes*60]
+    human = [r for r in rows if not r['self'] and not r['command']
+             and r['sender'] not in window.style_excluded_senders and now-r['at'] <= p.style_minutes*60]
     stats = {'median_chars': statistics.median([len(r['text']) for r in human]) if human else 0,
              'example_median_chars': statistics.median([len(r['text']) for r in style_rows]) if style_rows else 0,
              'short_ratio': round(sum(len(r['text']) <= 20 for r in human)/max(1, len(human)), 2),

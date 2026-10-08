@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "a126be1c414c4007e96d987d953f1c0aceb351aab4cc848afa873353058f2ca0"
+      "sha256": "ba588d47eb3563e490dedf4bc5ff149518bf4e0e6edafa865c2069f7be34b194"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "692fe3443202d7218bcbeaa9f205d72def248d11e3349aa8cc5770c44c9de693"
+      "sha256": "1365ca5fa8694d844c10e8377ebb106cc9472c17369d3280937fd7f4ce3352f8"
     },
     {
       "path": "ambient/__init__.py",
@@ -30,7 +30,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "3d16d0c4ecc0a8821e2088bfa9b9f5417083b9d247f365c01d04faa9b6e7e3b7"
+      "sha256": "13747b298178763ab5ee723ee80aa5baab006bf78fae816bdc79b56a61208cf6"
     },
     {
       "path": "ambient/delivery.py",
@@ -46,15 +46,15 @@
     },
     {
       "path": "ambient/learning.py",
-      "sha256": "ff3e3082534eb5f9b2fd2d87d0b00b4edd4414cd3ec2f7bf8bd53f5e2c59506e"
+      "sha256": "d88857e5cbfe01af924c4317059f50149312292bd87a40f71ad38663ac4c59b3"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "2046124c30474be56d4fcc9628a4807cf0391e2f87ea743d61934b1ebc3c8683"
+      "sha256": "5d66c917c84c5a1baf531a60a840a18bc24376c7fa29aaae13f51f415b85f6cd"
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "174ddf9c486b399fa6a7876713e8bccc14363089f958f6374f6d2c6ccbea2be6"
+      "sha256": "83c5900e22e02ec84b301170732e9ff3dadb07db72c3b62043f9e89dffeec88f"
     },
     {
       "path": "ambient/store.py",
@@ -94,7 +94,7 @@
     },
     {
       "path": "tests/test_learning.py",
-      "sha256": "857e602a60d3d76719f17aa109065cf778d061891f7fd0e632a4cecc268be643"
+      "sha256": "590b97c932893c00f24d360922945c805bbe7a906e1abce73b0207759c3859a5"
     },
     {
       "path": "tests/test_native.py",
@@ -106,7 +106,7 @@
     },
     {
       "path": "tools/build_schema.py",
-      "sha256": "e8a0b23194f61b15fe4bc883b0b9261e0163038f1547ed9dce4ce2223200db38"
+      "sha256": "0ec727e7ee442922af2f744ce5c236b1331e8be26b2ccb4970925530da821e0b"
     },
     {
       "path": "tools/migrate_light.py",

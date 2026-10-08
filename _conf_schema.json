@@ -34,6 +34,12 @@
             "description": "自然插话",
             "default": false
           },
+          "style_excluded_senders": {
+            "type": "list",
+            "description": "其他机器人账号（不学口吻）",
+            "default": [],
+            "hint": "填写本群该平台下已确认的机器人稳定成员 ID；QQ 官方为成员 OpenID，OneBot 为 QQ 号。仍保留其近期消息理解现场，不按昵称猜测。"
+          },
           "quota_mb": {
             "type": "float",
             "description": "本群额度（MiB，0 继承默认）",
