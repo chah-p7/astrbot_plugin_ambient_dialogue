@@ -62,7 +62,7 @@
     },
     {
       "path": "ambient/sticker_history.py",
-      "sha256": "c8e2ee2722ef9687c05bb9e27211de39ee88f8eeb64679d1cd20e9eedf6cfcd3"
+      "sha256": "3ba49f5e7d6e89e8a72da14b013913b327aebf7ac5ef8f4798bfa30d0131c56f"
     },
     {
       "path": "ambient/sticker_page.py",
@@ -70,7 +70,7 @@
     },
     {
       "path": "ambient/stickers.py",
-      "sha256": "7eb7c142e4bf3d3f68d978ef02dadce71627cae5fe51ae4aa86c9867a27046ab"
+      "sha256": "224c3299db4ff4c5a7228d504f8add5198384e06cca275d8381c3492eecc6396"
     },
     {
       "path": "ambient/store.py",
@@ -98,7 +98,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "0cf708a67062d2013661a263b4c6850d753cfe24efd04c8cb6e79d5cfe4aa72a"
+      "sha256": "849a072bf2b3298b0cba9a7a3d3c2807e684276284ba830c4e00406208ea6191"
     },
     {
       "path": "pages/stickers/app.js",
@@ -138,7 +138,7 @@
     },
     {
       "path": "tests/test_stickers.py",
-      "sha256": "0bfac134c4e94257d0821365fe62bfe7570c99b50799ae69c43c68bf8e65934f"
+      "sha256": "59aaa9739a9ab88accbb023b0d1d2530bb1c9300611e6ef503ba8b575fb1135e"
     },
     {
       "path": "tests/test_style_eval.py",

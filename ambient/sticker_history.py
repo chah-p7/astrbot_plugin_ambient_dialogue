@@ -22,7 +22,7 @@ def timestamp(value):
 async def import_history(stickers, route):
     bank, context = stickers.bank(route), stickers.rt.context
     report = {'state': 'running', 'started': int(time.time()), 'messages': 0, 'images': 0,
-              'downloaded': 0, 'unavailable': 0, 'conversations': 0, 'approximate_time': 0}
+              'downloaded': 0, 'unavailable': 0, 'conversations': 0, 'approximate_time': 0, 'failures': {}}
     bank.metadata('history', report)
 
     async def consume(identity, at, parts):
@@ -32,13 +32,18 @@ async def import_history(stickers, route):
             report['truncated'] = True
             return
         report['messages'] += 1
-        for source in set(image_sources(parts)):
+        for source in set(image_sources(parts, archived=True)):
             report['images'] += 1
             try:
                 result = await stickers.ingest(route, identity, at, 'history', source)
                 report['downloaded' if result else 'unavailable'] += 1
-            except Exception:
+                if not result:
+                    report['failures']['outside_retention_or_disabled'] = report['failures'].get('outside_retention_or_disabled',0)+1
+            except Exception as exc:
                 report['unavailable'] += 1
+                # Only our own fixed reason codes; never expose URLs or exception bodies.
+                reason = str(exc) if isinstance(exc, ValueError) and str(exc).startswith('image_') and len(str(exc)) < 64 else type(exc).__name__
+                report['failures'][reason] = report['failures'].get(reason, 0)+1
             bank.metadata('history', report)
 
     try:

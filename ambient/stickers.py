@@ -36,7 +36,7 @@ def parse_sticker(text, offered):
     return MARKER.sub('', str(text)).strip(), selected
 
 
-def image_sources(parts):
+def image_sources(parts, *, archived=False):
     """Top-level images only. Quotes, faces, files and records are not occurrences."""
     for part in parts or ():
         if isinstance(part, dict):
@@ -50,7 +50,8 @@ def image_sources(parts):
             value = getattr(part, 'url', '') or getattr(part, 'file', '') or getattr(part, 'path', '')
         else:
             continue
-        if isinstance(value, str) and 0 < len(value) <= 8192:
+        limit = MAX_DOWNLOAD*4//3+128 if archived and isinstance(value, str) and value.startswith('data:image/') else 8192
+        if isinstance(value, str) and 0 < len(value) <= limit:
             yield value
 
 
@@ -207,7 +208,7 @@ class Bank:
         for row in candidates:
             path = self.path(row['id'])
             size = path.stat().st_size if path.exists() else 0
-            if size and len(keep) < self.target*3 and used+size <= budget:
+            if row['count'] and size and len(keep) < self.target*3 and used+size <= budget:
                 keep.add(row['id'])
                 used += size
         # Keep bounded counting metadata for evicted images; re-observation can restore files.
@@ -236,6 +237,18 @@ class Bank:
 
 async def fetch_image(source, local_roots=()):
     """No arbitrary local files, credentials, redirects or private-network URLs."""
+    if source.startswith('data:image/'):
+        header, separator, encoded = source.partition(',')
+        if (header not in {'data:image/'+ext+';base64' for ext in ('png','jpeg','jpg','gif','webp','bmp')}
+                or not separator or len(encoded) > MAX_DOWNLOAD*4//3+4):
+            raise ValueError('image_data_invalid')
+        try:
+            result = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise ValueError('image_data_invalid') from None
+        if len(result) > MAX_DOWNLOAD:
+            raise ValueError('image_size')
+        return result
     parsed = urlparse(source)
     if parsed.scheme in {'', 'file'} or Path(source).is_absolute():
         if parsed.netloc or not local_roots:
@@ -243,7 +256,9 @@ async def fetch_image(source, local_roots=()):
         path = Path(url2pathname(parsed.path) if parsed.scheme == 'file' else source).resolve()
         if not any(path.is_relative_to(Path(root).resolve()) for root in local_roots):
             raise ValueError('image_local_source_unavailable')
-        if not path.is_file() or path.stat().st_size > MAX_DOWNLOAD:
+        if not path.is_file():
+            raise ValueError('image_file_missing')
+        if path.stat().st_size > MAX_DOWNLOAD:
             raise ValueError('image_size')
         return await asyncio.to_thread(path.read_bytes)
     if parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443):
@@ -284,6 +299,7 @@ class Stickers:
         self.queue = asyncio.Queue(maxsize=256)
         self.worker, self.import_task = None, None
         self.dropped = 0
+        self.next_cleanup = {}
 
     def enabled(self, route):
         return self.rt.owns(route) and self.rt.settings(route).get('stickers_enabled', False) is True
@@ -334,7 +350,7 @@ class Stickers:
     async def ingest(self, route, message, at, origin, source):
         if not self.enabled(route) or not time.time()-90*86400 <= at <= time.time()+60:
             return
-        data = await fetch_image(source, self.local_roots() if not source.startswith('https:') else ())
+        data = await fetch_image(source, self.local_roots() if not source.startswith(('https:', 'data:')) else ())
         if not self.enabled(route) or self.rt.closed:
             return
         return await asyncio.to_thread(self.bank(route).ingest, message, at, origin, data)
@@ -391,6 +407,11 @@ class Stickers:
             finally:
                 self.queue.task_done()
         for route in list(self.rt.routes.values()):
+            if self.enabled(route) or route.key in self.banks:
+                bank = self.bank(route)
+                if time.time() >= self.next_cleanup.get(route.key, 0):
+                    await asyncio.to_thread(bank.trim)
+                    self.next_cleanup[route.key] = time.time()+3600
             if not self.enabled(route):
                 continue
             bank = self.bank(route)

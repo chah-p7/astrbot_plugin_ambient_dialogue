@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from dataclasses import replace
 from io import BytesIO
 import json
@@ -69,6 +70,7 @@ class BankTests(unittest.TestCase):
         with self.bank.db() as db: db.execute('UPDATE occurrences SET at=1')
         self.bank.trim()
         self.assertEqual(0, self.bank.status()['observations'])
+        self.assertEqual([], list(self.bank.root.glob('*.png')))
 
     def test_reject_nonimages_and_no_metadata_retained_in_png(self):
         with self.assertRaises(Exception): normalize_image(b'not an image')
@@ -209,6 +211,19 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): await fetch_image(source)
         path=Path(self.tmp.name)/'test.png'; path.write_bytes(png())
         self.assertEqual(png(),await fetch_image(str(path),(self.tmp.name,)))
+
+    async def test_archived_embedded_images_and_redacted_failure_counts(self):
+        source='data:image/png;base64,'+base64.b64encode(png('blue')).decode()
+        self.assertEqual(png('blue'),await fetch_image(source))
+        with self.assertRaises(ValueError): await fetch_image('data:image/svg+xml;base64,abcd')
+        parts=[{'type':'image_url','image_url':{'url':source}},
+               {'type':'image_url','image_url':{'url':'https://example.com/private?secret=never-report'}}]
+        self.ctx.conversation_manager=NS(get_conversations=AsyncMock(return_value=[
+            NS(user_id=self.route.umo,history=json.dumps([{'role':'user','content':parts}]),created_at=time.time())]))
+        report=await import_history(self.rt.stickers,self.route)
+        self.assertEqual(1,report['downloaded'])
+        self.assertEqual({'image_host_not_allowed':1},report['failures'])
+        self.assertNotIn('secret',json.dumps(report))
 
 
 if __name__ == '__main__': unittest.main()
