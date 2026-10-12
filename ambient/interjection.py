@@ -144,6 +144,7 @@ class Interjections:
                 return
 
             claimed = False
+            own_receipts = set()
 
             async def before_send():
                 nonlocal claimed
@@ -151,7 +152,7 @@ class Interjections:
                 # Synchronous, short transaction: no await between final check and claim.
                 if not claimed and not store.claim_interjection(anchor, stable_id(text, selected), snap['revision']):
                     raise ValueError('draft_consumed_or_memory_changed')
-                rejection = reply_rejection(text, current, window, interject=True) if text or not sticker else ''
+                rejection = reply_rejection(text, current, window, interject=True, own_receipts=own_receipts) if text or not sticker else ''
                 if sticker and not rt.stickers.selected(route, selected, offered_stickers):
                     raise ValueError('sticker_no_longer_available')
                 if rejection or (not claimed and not store.claim_delivery(current['id'], stable_id(text, selected))):
@@ -164,6 +165,7 @@ class Interjections:
             async def record_part(part, receipt):
                 nonlocal confirmed_parts
                 await rt.confirmed(route, current, part, receipt, 'interjection')
+                own_receipts.add(receipt)
                 confirmed_parts += 1
                 state.sent += 1
 
@@ -182,6 +184,14 @@ class Interjections:
             # Never log raw chats, drafts, tokens or adapter exception bodies.
             state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else type(exc).__name__
             rt.errors += 1
+        finally:
+            # A real reply is interaction; merely considering/observing a
+            # message is not. Do this after all parts, including partial sends.
+            if confirmed_parts:
+                try:
+                    await asyncio.to_thread(store.identify, route.platform, current['sender'], current['name'], now=current['at'])
+                except Exception:
+                    rt.errors += 1
 
     async def close(self):
         self.closed = True

@@ -138,7 +138,7 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(2,len(sent))
             self.assertIn('sticker_choices', self.ctx.llm_generate.call_args.kwargs['prompt'])
 
-    async def test_attachment_uses_last_text_slot_and_uncertain_send_does_not_retry(self):
+    async def test_image_has_own_slot_and_uncertain_send_does_not_retry(self):
         sent, recorded = [], []
         async def send(text, guard, **kwargs):
             await guard(); sent.append((text, kwargs));
@@ -149,9 +149,48 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
             await send_reply_parts(transport, '一。\n\n二。\n\n三。', Policy(reply_segment_interval_ms=0),
                 AsyncMock(), AsyncMock(side_effect=lambda text,mid:recorded.append(text)), max_parts=2,
                 sticker={'data':png(),'caption':'笑哭'})
-        self.assertEqual(['一。'],recorded)
+        self.assertEqual(['一。\n\n二。\n\n三。'],recorded)
         self.assertEqual({'media':{'file_info':'x'}},sent[-1][1])
-        self.assertEqual('二。\n\n三。',sent[-1][0])
+        self.assertEqual('',sent[-1][0])
+        self.assertEqual({}, sent[0][1])
+
+    async def test_last_native_slot_prefers_complete_text_without_uploading(self):
+        transport=NS(prepare_image=AsyncMock(), send=AsyncMock(return_value='text-receipt'))
+        recorded=AsyncMock()
+        await send_reply_parts(transport, '一。\n\n二。', Policy(), AsyncMock(), recorded,
+                               max_parts=1, sticker={'data':png(),'caption':'笑'})
+        transport.prepare_image.assert_not_awaited()
+        self.assertEqual(('一。\n\n二。', 'text-receipt'), recorded.call_args.args)
+        self.assertEqual({}, transport.send.call_args.kwargs)
+
+    async def test_text_and_sticker_are_separate_on_both_reply_paths(self):
+        sent = []
+        class Sender:
+            def __init__(self, *args): pass
+            def check(self): pass
+            async def prepare_image(self, data): return {'file_info': 'test'}
+            async def send(self, text, guard, *, media=None):
+                await guard(); sent.append((text, media)); return 'part'+str(len(sent))
+        with patch('ambient.runtime.Transport', Sender), patch('ambient.interjection.Transport', Sender):
+            event=Event('来个图', mid='direct'); event.is_at_or_wake_command=True
+            await self.rt.inject(event, request(), Part)
+            response=NS(completion_text='拿去。[[sticker:'+self.short+']]')
+            await self.rt.response(event, response)
+            await event.send(NS(chain=[Plain(response.completion_text)]))
+            await self.rt.observe(Event('哈哈哈哈', mid='auto'))
+            state=self.rt.interjections.states[self.route.key]; state.suppressed_until=0
+            self.ctx.llm_generate.return_value=NS(completion_text=json.dumps(
+                {'reply':True,'text':'绷不住。[[sticker:'+self.short+']]'}))
+            await self.rt.interjections.run(self.route,state)
+        self.assertEqual([('拿去。',None),('',{'file_info':'test'}),
+                          ('绷不住。',None),('',{'file_info':'test'})], sent)
+        rows=[r for r in self.rt.windows[self.route.key].rows if r['self']]
+        self.assertEqual(['拿去。','[表情包：笑哭猫猫]','绷不住。','[表情包：笑哭猫猫]'], [r['text'] for r in rows])
+        self.assertEqual(['part1','part2','part3','part4'], [r['id'] for r in rows])
+        self.assertEqual(['reply','reply','interjection','interjection'], [r['source'] for r in rows])
+        from ambient.policy import reply_rejection
+        self.assertEqual('repeated_reply', reply_rejection('绷不住。',
+            {'text':'再聊聊','directed':True}, self.rt.windows[self.route.key]))
 
     async def test_upload_failure_falls_back_only_before_any_message_send(self):
         transport=NS(prepare_image=AsyncMock(side_effect=TimeoutError()), send=AsyncMock(return_value='ok'))

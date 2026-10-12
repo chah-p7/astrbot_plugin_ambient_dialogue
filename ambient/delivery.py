@@ -69,8 +69,12 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
     Any uncertain part stops the sequence; no retry or automatic resumption.
     """
     parts = split_reply(text, policy.reply_segment_chars)
+    if max_parts is not None and max_parts < 1:
+        raise ValueError('qq_reply_slots_exhausted')
     media = None
-    if sticker:
+    # Text and image always have separate receipts/bubbles. When only one
+    # native slot remains, keep the complete answer and omit the optional image.
+    if sticker and not (parts and max_parts == 1):
         # Upload is not a visible send and consumes no passive-reply slot.
         # Upload failure may fall back to text; an uncertain message send never retries.
         try:
@@ -78,23 +82,22 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
         except (ValueError, TimeoutError, OSError):
             if not parts:
                 raise
-        if media and not parts:
-            parts = ['']
     if max_parts is not None:
-        if max_parts < 1:
-            raise ValueError('qq_reply_slots_exhausted')
-        if len(parts) > max_parts:
+        text_slots = max_parts - bool(media)
+        if len(parts) > text_slots:
             # Preserve the rest of the answer when QQ's native per-anchor
             # allowance is smaller than the number of natural paragraphs.
-            parts = parts[:max_parts-1] + ['\n\n'.join(parts[max_parts-1:])]
+            parts = parts[:text_slots-1] + ['\n\n'.join(parts[text_slots-1:])]
+    messages = [(part, None) for part in parts]
+    if media:
+        messages.append(('', media))
     receipts = []
-    for index, part in enumerate(parts):
+    for index, (part, image) in enumerate(messages):
         if index and policy.reply_segment_interval_ms:
             await asyncio.sleep(policy.reply_segment_interval_ms / 1000)
-        last_media = media if index == len(parts)-1 else None
-        receipt = await asyncio.wait_for(transport.send(part, before_send, media=last_media)
-                                        if last_media else transport.send(part, before_send), 20)
-        recorded = part + (' [表情包：'+sticker['caption']+']' if last_media else '')
+        receipt = await asyncio.wait_for(transport.send(part, before_send, media=image)
+                                        if image else transport.send(part, before_send), 20)
+        recorded = '[表情包：'+sticker['caption']+']' if image else part
         await confirmed(recorded.strip(), receipt)
         receipts.append(receipt)
     return receipts

@@ -7,7 +7,7 @@ import sqlite3
 from threading import RLock
 import time
 
-from .policy import Policy, normalized, stable_id
+from .policy import Policy, display_name, normalized, stable_id
 
 
 PROTECTED = frozenset({'boundary', 'promise', 'todo'})
@@ -93,9 +93,15 @@ class Store:
             raise ValueError('缺少稳定平台成员标识')
         now = time.time() if now is None else now
         member = stable_id(self.group, namespace, account)
-        name = normalized(name)[:80] or str(account)[:80]
+        name = display_name(name, account)
         with self.connection() as db:
             old = db.execute('SELECT * FROM members WHERE id=?', (member,)).fetchone()
+            if old and now < old['seen']:
+                return member
+            # Some adapters temporarily return an empty nickname/the OpenID.
+            # Keep the last real display name instead of erasing it on refresh.
+            if not name and old:
+                name = display_name(old['name'], account)
             if not old and self.size() >= self.policy.quota_bytes:
                 raise ValueError('本群记忆额度已满，暂不能新增成员档案；仍可聊天')
             # No per-message growth/history. A daily activity bucket is enough
@@ -105,6 +111,10 @@ class Store:
                            'DO UPDATE SET name=excluded.name,seen=excluded.seen',
                            (member, namespace, account, name, now))
         return member
+
+    def knows(self, member):
+        with self.connection() as db:
+            return db.execute('SELECT 1 FROM members WHERE id=?', (member,)).fetchone() is not None
 
     def _summary(self, db):
         return json.loads(db.execute('SELECT summary FROM meta WHERE id=1').fetchone()[0])

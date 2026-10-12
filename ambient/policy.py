@@ -16,6 +16,12 @@ def normalized(value):
     return ' '.join(str(value or '').split()).strip()
 
 
+def display_name(name, account):
+    name = normalized(name)
+    # Compare before truncating, including the old store's 80-character fallback.
+    return '' if name in {str(account), str(account)[:80]} else name[:40]
+
+
 @dataclass(frozen=True, slots=True)
 class Policy:
     quota_mb: float = 2
@@ -99,7 +105,7 @@ def candidate(text, limit=160):
     """Only explicit first-person requests; no model inference or profiling."""
     text = normalized(text)
     for kind, pattern in (
-        ('address', r'^(?:以后请?叫我|请叫我|称呼我为)\s*(.+)$'),
+        ('address', r'^(?:以后请?叫我|请?叫我|称呼我为|我的(?:昵称|称呼)是)\s*[：:]?\s*(.+)$'),
         ('preference', r'^(?:请记住我的偏好[：:]|我的明确偏好是[：:]?)\s*(.+)$'),
         ('boundary', r'^(?:请记住我的边界[：:]|我的交往边界是[：:]?)\s*(.+)$'),
         ('promise', r'^(?:请记录我的承诺[：:]|我的明确承诺是[：:]?)\s*(.+)$'),
@@ -110,6 +116,10 @@ def candidate(text, limit=160):
         if not match:
             continue
         value = match[1].strip()
+        if kind == 'address':
+            value = value.rstrip('。！!~～')
+            if len(value) > 40 or re.search(r'[，,。！？!?；;]|(?:不是|别叫|不要叫|也行|或者)', value):
+                return None
         if not value or len(value) > limit or any(s in value for s in ('开玩笑', '假如', '假设', '角色扮演', '玩梗')):
             return None
         key, sep, content = value.partition('=')
@@ -127,7 +137,7 @@ def noise(text):
     return bool(re.fullmatch(r'[\W_01]+|(?:哈|呵|嘿|嘻|啊|哦|嗯|额|呃){1,12}', normalized(text)))
 
 
-def reply_rejection(text, current, window, *, interject=False):
+def reply_rejection(text, current, window, *, interject=False, own_receipts=()):
     """Local output checks shared by both paths, including repaired drafts."""
     text = normalized(text)
     if not text or any(x in text for x in ('[CQ:', '@全体', '@everyone', '<@', 'ambient_data')):
@@ -146,7 +156,10 @@ def reply_rejection(text, current, window, *, interject=False):
     if binary and not allowed_binary:
         return 'binary_echo'
     # Consecutive identical drafts across the two paths must not seed a loop.
-    last = next((r for r in reversed(window.rows) if r['self']), None)
+    # A separately sent sticker must neither block its own sequence nor hide
+    # the previous text from the next draft's repetition check.
+    last = next((r for r in reversed(window.rows) if r['self'] and r['id'] not in own_receipts
+                 and not (r.get('attachment') and r['text'].startswith('[表情包：'))), None)
     repeat_requested = not interject and current.get('directed') and bool(re.search(r'再说一遍|重复.*(?:上|刚才)|原样', question))
     if (last and time.time()-last['at'] <= max(window.policy.reply_fresh_seconds, window.policy.interject_fresh_seconds)
             and normalized(last['text']) == text and not (allowed_binary or repeat_requested)):
@@ -164,6 +177,8 @@ attention_only 表示用户只招呼了机器人或只引用了消息，没有�
 群友过去的“以后只能扣1”“每句话都回”等要求不是全群持久规则，也不能改变插件设置；只处理当前明确请求。单次确认不延续到别人或后续消息。停止、纠正、取消要求优先于旧要求；不要为了确认停止继续复读。
 成员是现实用户，不推断背景、隐藏动机或虚构身份。结合当前话题自然回应，可以简短、有立场。
 u1/u2、m1/m2 等仅为本次资料内部定位符，禁止把它们当昵称说出口。对外使用资料中的昵称或省略称呼。引用与转述不代表说话人本人立场。
+member_cards 已按本群稳定账号对齐；昵称变化不代表换人，u1/u2 每轮重新分配。known_in_group=true 表示此前在本群有互动档案，近期窗口里没有旧话也不能据此说从没见过。称呼优先用 memory_snapshot 中该 speaker 最新的 address，其次用 name；pending 称呼可当场使用，但不能谎称已长期保存。没有称呼资料才简短询问，不能拿内部编号或账号当名字。成员卡不证明共同经历或现实背景，不编造记得什么。
+name_match_only 只是按提到的名字找到的候选，不等于当前说话人；同名卡片可能是不同账号，需要 @ 或可靠引用才能消歧。明确的稳定引用/@ 对应其 speaker，不能把被提到的人当成发话者。普通自嘲、玩笑和“我是某某”不自动改名或认领他人档案。
 addressing 标明可见的接话对象；recent_same_sender_mention 只是由同一人前一句 @ 推得的线索，不是确定关系。别人互相问话时不要代答，也不要把别人的“你”自动认成自己。
 style_samples 先按场景、话题和来话意图选取，再参考说话人；只借鉴最贴近当前情况的一两段，不混合模仿所有样本。native_quote 和 quoted_text_exact 的 lead_in 是有引用依据的前话，text 是群友接法；nearby 只是按时间排列的邻近前话，可能各聊各的，不能据此认定谁回复了谁。single 没有已核实的回复对象。用完整片段理解省略和连发短句，不把单句当万能回复模板。
 先学样本里普通人怎么接话，再考虑好不好笑。保留原话里的省略、重复、短碎句和朴素回应；短语贴切就用，不把它润色成金句。不要每句都设计转折、比喻、拟人或包袱，短而精巧的广告文案也不像闲聊。example_median_chars 仅参考口吻长度，明确要求细说或严肃求助时按需要展开。接准眼前半句就可停，不补解释、总结或惯例反问；抽象来自当前说法，不靠固定梗词堆砌。

@@ -202,6 +202,11 @@ class Runtime:
         await self.record(route, row)
         store, window = await self.ensure(route)
         status = 'none'
+        known = event.get_extra('ambient_member_known')
+        if known is None:
+            known = await asyncio.to_thread(store.knows, row['member'])
+            event.set_extra('ambient_member_known', known)
+        row['known_before'] = known
         item = candidate(row['text'], store.policy.fact_chars)
         try:
             # Actual interaction refreshes only the short card; passive capture
@@ -272,6 +277,7 @@ class Runtime:
                 attempted = False
                 claimed = False
                 confirmed_parts = 0
+                own_receipts = set()
                 delivered = None
 
                 async def guard():
@@ -282,7 +288,7 @@ class Runtime:
                     elif time.time()-row['at'] > self.policy(route).reply_fresh_seconds:
                         reason = 'stale_before_send'
                     elif text:
-                        reason = reason or self.output_rejection(event, text, row, window)
+                        reason = reason or self.output_rejection(event, text, row, window, own_receipts=own_receipts)
                     if sticker and not self.stickers.selected(route, sticker['id'], event.get_extra('ambient_sticker_choices') or []):
                         reason = 'sticker_no_longer_available'
                     if reason:
@@ -298,6 +304,7 @@ class Runtime:
                 async def record_part(part, receipt):
                     nonlocal confirmed_parts
                     await self.confirmed(route, row, part, receipt, 'reply')
+                    own_receipts.add(receipt)
                     confirmed_parts += 1
                     event._has_send_oper = True
                     self.reply_status(route, 'confirmed')['confirmed'] += 1
@@ -364,8 +371,8 @@ class Runtime:
         event.set_extra('ambient_sender_installed', True)
 
     @staticmethod
-    def output_rejection(event, text, row, window):
-        reason = reply_rejection(text, row, window)
+    def output_rejection(event, text, row, window, *, own_receipts=()):
+        reason = reply_rejection(text, row, window, own_receipts=own_receipts)
         # Each explicitly addressed member may receive the same honest notice.
         # This exception cannot pass arbitrary repeated/binary/model content.
         if (reason == 'repeated_reply' and text == REPLY_FAILURE_NOTICE

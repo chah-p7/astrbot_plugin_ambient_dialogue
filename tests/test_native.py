@@ -53,6 +53,26 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, len(self.calls))
         self.assertTrue(all(c['url'].endswith('/files') for c in self.calls))
 
+    async def test_native_sticker_has_empty_content_and_a_separate_sequence(self):
+        from ambient.delivery import send_reply_parts
+        from ambient.policy import Policy
+        self.response = lambda: ({'file_info': 'native-file'} if self.calls[-1]['url'].endswith('/files')
+                                 else {'id': 'receipt'+str(len(self.calls))})
+        guard = AsyncMock(side_effect=[10001,10002,10003])
+        confirmed = AsyncMock()
+        await send_reply_parts(Transport(self.ctx,self.event,self.route), '第一段。\n\n第二段。',
+            Policy(reply_segment_interval_ms=0), guard, confirmed, max_parts=3,
+            sticker={'data':b'fake-image-for-wire-contract','caption':'合成测试图'})
+        messages=[c['json'] for c in self.calls if not c['url'].endswith('/files')]
+        self.assertEqual([0,0,7], [m['msg_type'] for m in messages])
+        self.assertEqual(['第一段。','第二段。',''], [m.get('content','') for m in messages])
+        self.assertEqual([10001,10002,10003], [m['msg_seq'] for m in messages])
+        self.assertTrue(all(m['msg_id']=='m1' for m in messages))
+        self.assertTrue(all(not m.get('media') for m in messages[:2]))
+        self.assertEqual({'file_info':'native-file'}, messages[2]['media'])
+        self.assertEqual(['第一段。','第二段。','[表情包：合成测试图]'],
+                         [c.args[0] for c in confirmed.await_args_list])
+
     async def test_real_request_roundtrip_preserves_persona_and_does_not_save_ambient(self):
         import astrbot
         from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints, CheckpointMessageSegment, CheckpointData

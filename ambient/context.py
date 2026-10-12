@@ -4,15 +4,76 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import re
 import statistics
 import time
 
-from .policy import normalized, stable_id
+from .policy import display_name, normalized, stable_id
 from .learning import MENTION, addressing, mentions as message_mentions, plain_text, quote_source, reply_feedback, style_examples
 
 
 def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
+def participants(snapshot, people, current):
+    """Resolve only stable accounts; name search returns candidates, never merges."""
+    members = {r['id']: r for r in snapshot.get('members', [])}
+    aliases, accounts, names, latest = {}, {}, {}, {}
+    for r in people:
+        if r['self']:
+            accounts[r['sender']] = 'bot'
+            continue
+        member = r['member']
+        aliases.setdefault(member, 'u'+str(len(aliases)+1))
+        accounts[r['sender']] = aliases[member]
+        latest.setdefault(member, r)
+    for member, r in members.items():
+        names[member] = display_name(r['name'], r['account'])
+    for member, r in latest.items():
+        name = display_name(r.get('name', ''), r['sender'])
+        if name and (r is current or r['at'] >= members.get(member, {}).get('seen', 0)):
+            names[member] = name
+        names.setdefault(member, '')
+
+    addresses = {}
+    for r in sorted(snapshot.get('facts', []) + snapshot.get('candidates', []), key=lambda r: r['at']):
+        if r['kind'] == 'address' and not r.get('expires'):
+            addresses[r['member']] = r['text']
+    by_account = {r['account']: member for member, r in members.items()}
+    priority = [current['member']] if current and not current['self'] else []
+    referenced = []
+    for row in people:
+        refs = message_mentions(row) + [(row.get('quote') or {}).get('sender')]
+        for account in refs:
+            member = by_account.get(account)
+            if member and account not in accounts:
+                aliases.setdefault(member, 'u'+str(len(aliases)+1))
+                accounts[account] = aliases[member]
+            if member:
+                (priority if row is current else referenced).append(member)
+    named = set()
+    question = plain_text(current['text']) if current else ''
+    for member in members:
+        for name in (names.get(member, ''), addresses.get(member, '')):
+            if 2 <= len(name) <= 40 and re.search(r'(?<![A-Za-z0-9_])'+re.escape(name)+r'(?![A-Za-z0-9_])', question, re.I):
+                named.add(member)
+                aliases.setdefault(member, 'u'+str(len(aliases)+1))
+                accounts[members[member]['account']] = aliases[member]
+                priority.append(member)
+                break
+    priority.extend(latest)
+    priority.extend(referenced)
+    cards = []
+    for member in dict.fromkeys(priority):
+        card = {'speaker': aliases[member], 'name': names.get(member, ''),
+                'known_in_group': member in members}
+        if current and member == current['member']:
+            card['known_in_group'] = current.get('known_before', card['known_in_group'])
+        if member in named and member not in latest:
+            card['name_match_only'] = True
+        cards.append(card)
+    return aliases, accounts, names, cards
 
 
 @dataclass(frozen=True)
@@ -101,7 +162,7 @@ def event_message(event, route, *, now=None):
     at = min(now, at)
     self_message = sender == route.account or (event_self not in {'', 'qq_official', 'unknown_selfid'} and sender == event_self)
     return {'id': identity, 'sender': sender, 'member': route.member(sender),
-            'name': normalized(event.get_sender_name())[:40], 'text': text,
+            'name': display_name(event.get_sender_name(), sender), 'text': text,
             'at': at, 'self': self_message, 'command': text.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
             'attention_only': attention_only, 'directed': directed}
@@ -137,13 +198,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     rows = list(window.rows)
     people = [current] if current else []
     people.extend(reversed(rows))
-    aliases = {}
-    for r in people:
-        if r['self']:
-            continue
-        if r['member'] not in aliases:
-            aliases[r['member']] = 'u'+str(len(aliases)+1)
-    accounts = {r['sender']: aliases.get(r['member'], 'bot') for r in people}
+    aliases, accounts, names, cards = participants(snapshot, people, current)
     ids = {r['id']: 'm'+str(i+1) for i, r in enumerate(rows)}
 
     def render(r):
@@ -152,7 +207,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         if r['self']:
             result['source'] = r.get('source', 'interjection')
         if not r['self']:
-            result['name'] = r.get('name', '')
+            result['name'] = names.get(r['member'], '')
             if r['sender'] in window.style_excluded_senders:
                 result['automated'] = True
         if r.get('attention_only'):
@@ -160,8 +215,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         if r.get('quote'):
             q = r['quote']
             source, link = quote_source(r, rows)
+            quoted_speaker = (accounts.get(q.get('sender'), 'unknown')
+                              if q.get('id') not in ids else 'unknown')
             result['quote'] = {'ref': ids.get(source['id'], 'outside_window') if source else 'outside_window',
-                               'speaker': accounts.get(source['sender'], 'unknown') if source else accounts.get(q.get('sender'), 'unknown'),
+                               'speaker': accounts.get(source['sender'], 'unknown') if source else quoted_speaker,
                                'text': plain_text(source['text'] if source else q.get('text', ''))[:240],
                                'link': link or 'unresolved'}
         if message_mentions(r):
@@ -199,24 +256,27 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                 kept.append(item)
         return kept
 
-    facts = snapshot.get('facts', []) + snapshot.get('summary', [])
+    # Pending corrections replace the old value in this prompt immediately;
+    # state still says pending until the existing batch commits it.
+    facts = {r['id']: {**r, 'state': 'committed'}
+             for r in snapshot.get('summary', []) + snapshot.get('facts', [])}
+    facts.update({r['id']: {**r, 'state': 'pending'} for r in snapshot.get('candidates', [])})
+    facts = list(facts.values())
     # Explicit boundaries take precedence when a snapshot exceeds its budget.
-    facts.sort(key=lambda r: (r['kind'] not in {'boundary', 'promise', 'todo'}, -r['at']))
+    facts.sort(key=lambda r: (r['kind'] not in {'boundary', 'promise', 'todo'},
+                             r['member'] != (current or {}).get('member'), r['kind'] != 'address', -r['at']))
     memory = []
     for r in facts + snapshot.get('interaction_notes', []):
         if r['member'] not in aliases or (r.get('expires', 0) and r['expires'] <= now):
             continue
         memory.append({'speaker': aliases[r['member']], 'kind': r.get('kind', 'interaction_note'),
-                       'text': r['text'], 'at': int(r['at']), 'state': 'committed'})
-    for r in snapshot.get('candidates', []):
-        if r['member'] in aliases:
-            memory.append({'speaker': aliases[r['member']], 'kind': r['kind'], 'text': r['text'],
-                           'at': int(r['at']), 'state': 'pending'})
+                       'text': r['text'], 'at': int(r['at']), 'state': r.get('state', 'committed')})
     context_rows = bounded([render(r) for r in reversed(recent)], p.recent_chars)
     context_rows.reverse()
     feedback_rows = bounded(feedback, min(700, p.style_chars//2))
     style_rows = bounded(style, p.style_chars-len(compact(feedback_rows)))
-    memory_rows = bounded(memory, p.memory_chars)
+    member_cards = bounded(cards[:8], min(800, p.memory_chars//2))
+    memory_rows = bounded(memory, max(0, p.memory_chars-len(compact(member_cards))))
     human = [r for r in rows if not r['self'] and not r['command']
              and r['sender'] not in window.style_excluded_senders and now-r['at'] <= p.style_minutes*60]
     stats = {'median_chars': statistics.median([len(r['text']) for r in human]) if human else 0,
@@ -228,6 +288,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     pack = {'generated_at': int(now), 'current_message': render(current) if current else None,
             'current_speaker': aliases.get(current['member']) if current else None,
             'memory_request_status': memory_status, 'recent_context': context_rows,
+            'member_cards': member_cards,
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': len(recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
@@ -236,7 +297,7 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards'):
         while pack[key] and len(compact(pack)) > p.pack_chars:
             pack[key].pop(0 if key == 'recent_context' else -1)
             pack['omitted_count'] += 1
