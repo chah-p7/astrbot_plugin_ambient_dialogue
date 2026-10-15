@@ -31,21 +31,27 @@ def plain_text(text):
 
 
 def addressing(row, rows):
-    targets = mentions(row)
-    if targets:
-        return targets, 'explicit_mention'
     if row.get('directed'):
         return ['bot'], 'directed_to_bot'
+    # A person mentioned inside a sentence can be its subject, not its addressee.
+    leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', row['text'])
+    if leading:
+        return list(dict.fromkeys(MENTION.findall(leading[0]))), 'explicit_mention'
     source, link = quote_source(row, rows)
     if source:
         return ['bot' if source['self'] else source['sender']], link
+    targets = mentions(row)
+    if targets and not MENTION.search(row['text']):
+        return targets, 'mention_positions_unknown'
     # A short follow-on "那你…" can continue the same sender's explicit @.
     # Label the inference; it must never become an asserted relationship.
     if re.search(r'你|您', row['text']):
         previous = next((r for r in reversed(rows) if r['sender'] == row['sender']
                          and r['id'] != row['id'] and 0 <= row['at']-r['at'] <= 90), None)
-        if previous and mentions(previous):
-            return mentions(previous), 'recent_same_sender_mention'
+        if previous:
+            leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', previous['text'])
+            if leading:
+                return list(dict.fromkeys(MENTION.findall(leading[0]))), 'recent_same_sender_mention'
     return [], 'unspecified'
 
 
@@ -98,7 +104,8 @@ def words(text):
     terms = re.findall(r'[a-z0-9_]{2,}', text.lower())
     for phrase in re.findall(r'[\u4e00-\u9fff]{2,}', text):
         terms.extend(phrase[i:i+2] for i in range(len(phrase)-1))
-    return set(terms) - {'这个', '那个', '什么', '怎么', '你们', '我们', '是不是', '不是', '一个', '一下'}
+    return set(terms) - {'这个', '那个', '什么', '怎么', '你们', '我们', '是不是', '不是', '一个', '一下',
+                         '自己', '感觉', '觉得', '现在', '刚才', '好像', '已经', '还有', '真的', '一点'}
 
 
 def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
@@ -143,19 +150,19 @@ def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
         if reaction and not (lead or any(not noise(plain_text(r['text'])) for r in before)):
             continue
         examples.append(StyleExample(row, lead, link if lead else 'single', tuple(before)))
-    query = current['text'] if current else ''
+    query = plain_text(current['text']) if current else ''
     source, _ = quote_source(current, rows) if current else (None, '')
     if source:
-        query += ' '+source['text']
+        query += ' '+plain_text(source['text'])
     scenes, intents = signals(query)
     terms = words(query)
 
     def rank(example):
         row, lead = example.row, example.lead
         incoming = lead or row
-        incoming_text = incoming['text']
+        incoming_text = plain_text(incoming['text'])
         if not lead:
-            incoming_text = ' '.join([r['text'] for r in example.context if r['sender'] == row['sender']] + [incoming_text])
+            incoming_text = ' '.join([plain_text(r['text']) for r in example.context if r['sender'] == row['sender']] + [incoming_text])
         old_scenes, old_intents = signals(incoming_text)
         overlap = len(terms & words(incoming_text))
         scene_match = len(scenes & old_scenes)
@@ -165,6 +172,11 @@ def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
     # Scene and incoming intent precede identity; do not copy the asker's tone
     # just because an unrelated line happens to come from the same person.
     examples.sort(key=rank, reverse=True)
+    if current:
+        relevant = [e for e in examples if rank(e)[0]]
+        # Do not fill the quota with unrelated old topics. A small fallback can
+        # still demonstrate room rhythm when there is no matching situation.
+        examples = relevant or sorted(examples, key=lambda e: e.row['at'], reverse=True)[:2]
     selected, counts, covered, reactions = [], Counter(), set(), 0
     for example in examples:
         row = example.row

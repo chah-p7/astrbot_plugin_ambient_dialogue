@@ -16,7 +16,7 @@ def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
-def participants(snapshot, people, current):
+def participants(snapshot, people, current, focused=()):
     """Resolve only stable accounts; name search returns candidates, never merges."""
     members = {r['id']: r for r in snapshot.get('members', [])}
     aliases, accounts, names, latest = {}, {}, {}, {}
@@ -35,23 +35,30 @@ def participants(snapshot, people, current):
         if name and (r is current or r['at'] >= members.get(member, {}).get('seen', 0)):
             names[member] = name
         names.setdefault(member, '')
+    for r in people:
+        if not r['self'] and not names.get(r['member']):
+            names[r['member']] = display_name(r.get('name', ''), r['sender'])
 
     addresses = {}
     for r in sorted(snapshot.get('facts', []) + snapshot.get('candidates', []), key=lambda r: r['at']):
         if r['kind'] == 'address' and not r.get('expires'):
             addresses[r['member']] = r['text']
     by_account = {r['account']: member for member, r in members.items()}
+    by_account.update({r['sender']: r['member'] for r in people if not r['self']})
     priority = [current['member']] if current and not current['self'] else []
     referenced = []
     for row in people:
         refs = message_mentions(row) + [(row.get('quote') or {}).get('sender')]
         for account in refs:
-            member = by_account.get(account)
-            if member and account not in accounts:
+            if not account or account == 'bot' or accounts.get(account) == 'bot':
+                continue
+            # Unknown mentioned accounts still need distinct prompt-local IDs.
+            # This does not create a persistent profile for a passive member.
+            member = by_account.get(account, 'mentioned:'+account)
+            if account not in accounts:
                 aliases.setdefault(member, 'u'+str(len(aliases)+1))
                 accounts[account] = aliases[member]
-            if member:
-                (priority if row is current else referenced).append(member)
+            (priority if row is current else referenced).append(member)
     named = set()
     question = plain_text(current['text']) if current else ''
     for member in members:
@@ -62,6 +69,7 @@ def participants(snapshot, people, current):
                 accounts[members[member]['account']] = aliases[member]
                 priority.append(member)
                 break
+    priority.extend(r['member'] for r in focused if not r['self'])
     priority.extend(latest)
     priority.extend(referenced)
     cards = []
@@ -70,7 +78,7 @@ def participants(snapshot, people, current):
                 'known_in_group': member in members}
         if current and member == current['member']:
             card['known_in_group'] = current.get('known_before', card['known_in_group'])
-        if member in named and member not in latest:
+        if member in named and (not current or member != current['member']):
             card['name_match_only'] = True
         cards.append(card)
     return aliases, accounts, names, cards
@@ -125,7 +133,10 @@ def event_message(event, route, *, now=None):
         if kind == 'Plain':
             pieces.append(str(part.text))
         elif kind == 'At':
-            mentions.append(str(getattr(part, 'qq', '')))
+            target = str(getattr(part, 'qq', ''))
+            mentions.append(target)
+            if target:
+                pieces.append('<@'+target+'>')
         elif kind == 'Reply':
             quoted_text = normalized(getattr(part, 'message_str', ''))
             quote = {'id': str(getattr(part, 'id', ''))[:256],
@@ -142,10 +153,11 @@ def event_message(event, route, *, now=None):
     # It is still an explicit At(self_id), even when no mention ID is supplied.
     bot_ids = {route.account, event_self} - {'', 'unknown_selfid'}
     mentions = list(dict.fromkeys('bot' if target in bot_ids else target for target in mentions))
-    text = plain_text(text)
+    text = MENTION.sub(lambda m: '<@bot>' if m[1] in bot_ids else m[0], text)
     directed = bool(getattr(event, 'is_at_or_wake_command', False))
-    attention_only = not text and directed and ('bot' in mentions or quote is not None)
-    if not text:
+    body = plain_text(text)
+    attention_only = not body and directed and ('bot' in mentions or quote is not None)
+    if not body:
         if not attention_only:
             return None
         text = '[引用消息，无附加正文]' if quote else '[仅@机器人，无正文]'
@@ -163,7 +175,7 @@ def event_message(event, route, *, now=None):
     self_message = sender == route.account or (event_self not in {'', 'qq_official', 'unknown_selfid'} and sender == event_self)
     return {'id': identity, 'sender': sender, 'member': route.member(sender),
             'name': display_name(event.get_sender_name(), sender), 'text': text,
-            'at': at, 'self': self_message, 'command': text.startswith(('/', '／')),
+            'at': at, 'self': self_message, 'command': body.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
             'attention_only': attention_only, 'directed': directed}
 
@@ -191,19 +203,65 @@ class Window:
         self.rows = deque((r for r in self.rows if r['member'] != member), maxlen=self.policy.raw_limit)
 
 
+def focus_rows(rows, current):
+    """Pin verified quote ancestors; label nearby same-speaker lines as hints."""
+    if not current:
+        return []
+    selected, seen = [], {current['id']}
+
+    def chain(row, reason):
+        for _ in range(4):
+            source, _ = quote_source(row, rows)
+            if not source or source['id'] in seen or source.get('command'):
+                break
+            seen.add(source['id'])
+            selected.append((source, reason))
+            row, reason = source, 'quote_ancestor'
+
+    chain(current, 'direct_quote')
+    if not current.get('quote'):
+        # Adjacency is not a reply edge, especially in a busy room.
+        for row in reversed(rows):
+            if (row['id'] not in seen and row['sender'] == current['sender']
+                    and 0 <= current['at']-row['at'] <= 90):
+                if row.get('command'):
+                    break
+                seen.add(row['id'])
+                selected.append((row, 'same_speaker_recent'))
+                if sum(reason == 'same_speaker_recent' for _, reason in selected) == 2:
+                    break
+        # Only a confirmed reply to this account, never the room's last bot line.
+        previous = next((r for r in reversed(rows) if r['self'] and not r.get('attachment')
+                         and (r.get('quote') or {}).get('sender') == current['sender']
+                         and 0 <= current['at']-r['at'] <= 180), None)
+        if previous and previous['id'] not in seen:
+            seen.add(previous['id'])
+            selected.append((previous, 'last_reply_to_speaker'))
+            chain(previous, 'reply_anchor')
+    return selected[:6]
+
+
+def model_text(text, accounts):
+    """Preserve mention positions while hiding stable platform identifiers."""
+    return normalized(MENTION.sub(lambda m: '@'+accounts.get(m[1], 'bot' if m[1] == 'bot' else 'unknown'), text))
+
+
 def build_pack(window, snapshot, current, *, now, memory_status='none'):
     """Raw evidence, bounded locally. Model never sees stable platform IDs."""
     p = window.policy
     window.trim(now)
-    rows = list(window.rows)
+    rows = [r for r in window.rows if r['at'] <= min(now, current['at'] if current else now)]
+    if current and any(r['id'] == current['id'] for r in rows):
+        rows = rows[:next(i for i, r in enumerate(rows) if r['id'] == current['id'])+1]
+    focused = focus_rows(rows, current)
     people = [current] if current else []
     people.extend(reversed(rows))
-    aliases, accounts, names, cards = participants(snapshot, people, current)
+    aliases, accounts, names, cards = participants(snapshot, people, current, [r for r, _ in focused])
     ids = {r['id']: 'm'+str(i+1) for i, r in enumerate(rows)}
 
     def render(r):
         result = {'ref': ids.get(r['id'], 'current'), 'speaker': 'bot' if r['self'] else aliases[r['member']],
-                  'text': plain_text(r['text']), 'at': int(r['at']), 'seconds_ago': max(0, int(now-r['at']))}
+                  'text': model_text(r['text'], accounts), 'at': int(r['at']), 'seconds_ago': max(0, int(now-r['at']))}
         if r['self']:
             result['source'] = r.get('source', 'interjection')
         if not r['self']:
@@ -219,10 +277,12 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                               if q.get('id') not in ids else 'unknown')
             result['quote'] = {'ref': ids.get(source['id'], 'outside_window') if source else 'outside_window',
                                'speaker': accounts.get(source['sender'], 'unknown') if source else quoted_speaker,
-                               'text': plain_text(source['text'] if source else q.get('text', ''))[:240],
+                               'text': model_text(source['text'] if source else q.get('text', ''), accounts)[:240],
                                'link': link or 'unresolved'}
         if message_mentions(r):
             result['mentions'] = [accounts.get(a, 'bot' if a == 'bot' else 'outside_window') for a in message_mentions(r)]
+            if not MENTION.search(r['text']) and not r.get('attention_only'):
+                result['mention_positions_unknown'] = True
         if not r['self']:
             targets, basis = addressing(r, rows)
             if targets:
@@ -234,7 +294,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
               (not current or r['id'] != current['id']) and not r['command']][-p.recent_messages:]
     style = []
     def style_line(row):
-        return {'ref': ids[row['id']], 'speaker': aliases[row['member']], 'text': plain_text(row['text'])}
+        return {'ref': ids[row['id']], 'speaker': aliases[row['member']],
+                'text': model_text(row['text'], accounts), 'seconds_ago': max(0, int(now-row['at']))}
 
     for example in style_examples(rows, p, now, current, excluded=window.style_excluded_senders):
         # Keep source anchors and whole messages; use the budget for real speech
@@ -271,7 +332,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             continue
         memory.append({'speaker': aliases[r['member']], 'kind': r.get('kind', 'interaction_note'),
                        'text': r['text'], 'at': int(r['at']), 'state': r.get('state', 'committed')})
-    context_rows = bounded([render(r) for r in reversed(recent)], p.recent_chars)
+    focus = bounded([{**render(r), 'relevance': reason} for r, reason in focused], min(p.recent_chars, p.pack_chars//2))
+    focus_ids = {r['ref'] for r in focus}
+    context_rows = bounded([render(r) for r in reversed(recent) if ids[r['id']] not in focus_ids],
+                           max(0, p.recent_chars-len(compact(focus))))
     context_rows.reverse()
     feedback_rows = bounded(feedback, min(700, p.style_chars//2))
     style_rows = bounded(style, p.style_chars-len(compact(feedback_rows)))
@@ -279,25 +343,25 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     memory_rows = bounded(memory, max(0, p.memory_chars-len(compact(member_cards))))
     human = [r for r in rows if not r['self'] and not r['command']
              and r['sender'] not in window.style_excluded_senders and now-r['at'] <= p.style_minutes*60]
-    stats = {'median_chars': statistics.median([len(r['text']) for r in human]) if human else 0,
+    stats = {'median_chars': statistics.median([len(plain_text(r['text'])) for r in human]) if human else 0,
              'example_median_chars': statistics.median([len(r['text']) for r in style_rows]) if style_rows else 0,
-             'short_ratio': round(sum(len(r['text']) <= 20 for r in human)/max(1, len(human)), 2),
+             'short_ratio': round(sum(len(plain_text(r['text'])) <= 20 for r in human)/max(1, len(human)), 2),
              'question_ratio': round(sum('?' in r['text'] or '？' in r['text'] for r in human)/max(1, len(human)), 2),
              'emoji_ratio': round(sum(r['attachment'] for r in human)/max(1, len(human)), 2),
              'confirmed_self_ratio': round(sum(r['self'] for r in rows)/max(1, len(rows)), 2)}
     pack = {'generated_at': int(now), 'current_message': render(current) if current else None,
             'current_speaker': aliases.get(current['member']) if current else None,
-            'memory_request_status': memory_status, 'recent_context': context_rows,
+            'memory_request_status': memory_status, 'focus_context': focus, 'recent_context': context_rows,
             'member_cards': member_cards,
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
-            'omitted_count': len(recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+            'omitted_count': sum(ids[r['id']] not in focus_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
     if pack['current_message']:
         pack['current_message']['text'] = pack['current_message']['text'][:p.pack_chars//3]
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'focus_context'):
         while pack[key] and len(compact(pack)) > p.pack_chars:
             pack[key].pop(0 if key == 'recent_context' else -1)
             pack['omitted_count'] += 1

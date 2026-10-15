@@ -68,7 +68,7 @@ def _search_tools(context, settings, check, pending):
 
 
 async def generate(context, event, *, chat_provider_id, system_prompt, prompt,
-                   guard, expected_settings=None, max_tokens=None):
+                   guard, expected_settings=None, max_tokens=None, image_urls=(), audio_urls=()):
     """Return a draft; the caller owns its deadline, validation and delivery."""
     settings = context.get_config(event.unified_msg_origin).get('provider_settings', {})
     expected_settings = expected_settings or stable_id(settings)
@@ -87,6 +87,10 @@ async def generate(context, event, *, chat_provider_id, system_prompt, prompt,
         tools = _search_tools(context, settings, check, pending)
         kwargs = dict(chat_provider_id=chat_provider_id, system_prompt=system_prompt,
                       prompt=prompt, contexts=[], tools=tools, request_max_retries=0)
+        if image_urls:
+            kwargs['image_urls'] = list(image_urls)
+        if audio_urls:
+            kwargs['audio_urls'] = list(audio_urls)
         if tools is None:
             if max_tokens is not None:
                 kwargs['max_tokens'] = max_tokens

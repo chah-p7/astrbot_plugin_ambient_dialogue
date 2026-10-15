@@ -70,13 +70,13 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         req = request()
         await self.rt.inject(normal, req, Part)
         pack = json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
-        self.assertEqual('这把先歇会儿吧。', next(r['text'] for r in pack['recent_context'] if r['speaker']=='bot'))
+        self.assertEqual('这把先歇会儿吧。', next(r['text'] for r in pack['focus_context'] if r['speaker']=='bot'))
         self.assertEqual('你刚才说了什么', pack['current_message']['text'])
         await self.rt.response(normal, NS(completion_text='我说先休息一下。'))
         await normal.send(NS(chain=[Plain('我说先休息一下。')]))
         await self.interject(Event('现在赢回来了', mid='won'), '那就收工，别把赢的再送回去。')
         auto_pack = json.loads(self.ctx.llm_generate.call_args.kwargs['prompt'])['ambient_data']
-        self.assertEqual({'reply', 'interjection'}, {r['source'] for r in auto_pack['recent_context'] if r['speaker']=='bot'})
+        self.assertEqual({'reply', 'interjection'}, {r['source'] for r in auto_pack['recent_context']+auto_pack['focus_context'] if r['speaker']=='bot'})
         self.assertEqual('现在赢回来了', auto_pack['current_message']['text'])
         self.assertEqual([], req.contexts)
         self.assertIsNone(req.conversation)
@@ -198,7 +198,7 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
             pack = json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
             self.assertTrue(pack['current_message']['attention_only'])
             self.assertIn('bot', pack['current_message']['mentions'])
-            self.assertIn('早八还活着吗', str(pack['recent_context']))
+            self.assertIn('早八还活着吗', str(pack['focus_context']))
             self.assertTrue(self.rt.busy(self.route))
         self.ctx.llm_generate.assert_not_awaited()
 

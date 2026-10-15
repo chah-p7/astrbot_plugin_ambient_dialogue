@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -77,12 +78,13 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         import astrbot
         from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints, CheckpointMessageSegment, CheckpointData
         from astrbot.core.provider.entities import ProviderRequest, LLMResponse
-        ctx, event = context(), Event()
+        ctx, event = context(), Event('还能玩吗')
         event.is_at_or_wake_command = True
         with tempfile.TemporaryDirectory() as tmp:
             rt = Runtime(tmp, ctx, {'groups':[{'umo':event.unified_msg_origin,'capture_only':False}]})
             try:
                 await rt.observe(Event('刚刚输了三把', mid='old'))
+                event.message_obj.raw_message.timestamp = datetime.now(timezone.utc)
                 req = ProviderRequest(prompt='还能玩吗', system_prompt='RR 原有人格', conversation=NS(cid='conversation'))
                 await rt.inject(event, req, TextPart)
                 await rt.inject(event, req, TextPart)

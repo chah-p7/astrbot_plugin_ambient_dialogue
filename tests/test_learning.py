@@ -36,7 +36,7 @@ class LearningTests(unittest.TestCase):
         member = self.row('我明天早上到', 'arrival', 'PRIVATE_USER_42', ago=5)
         ask = self.row('<@PRIVATE_USER_42> 那几点出门', 'ask', 'ASKER')
         self.assertEqual(['PRIVATE_USER_42'], ask['mentions'])
-        self.assertEqual('那几点出门', ask['text'])
+        self.assertEqual('<@PRIVATE_USER_42> 那几点出门', ask['text'])
         for current in (ask, {**ask, 'text': '<@PRIVATE_USER_42> 那几点出门', 'mentions': []}):
             pack = self.pack([member, current], current)
             self.assertNotIn('PRIVATE_USER_42', compact(pack))
@@ -126,7 +126,7 @@ class LearningTests(unittest.TestCase):
         reply['quote']['text'] = ''
         pack = self.pack([source, reply], reply)
         self.assertEqual(source['text'], pack['current_message']['quote']['text'])
-        self.assertEqual([pack['recent_context'][0]['speaker']], pack['current_message']['addressing']['targets'])
+        self.assertEqual([pack['focus_context'][0]['speaker']], pack['current_message']['addressing']['targets'])
 
     def test_exact_text_quotes_require_unique_complete_source_before_author_hint(self):
         source = self.row('来点难的，这题太会了', 'a', 'A', ago=30)
