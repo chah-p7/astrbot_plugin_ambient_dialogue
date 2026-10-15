@@ -243,6 +243,40 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(secret, output)
         self.ctx.llm_generate.assert_awaited_once()
 
+    async def test_borrowed_experience_repaired_once_and_interjection_silenced(self):
+        invalid = '祈祷真有用我早不用写作业了'
+        fixed = '先上课吧，让它自己跑一会儿'
+        self.ctx.llm_generate.return_value = NS(completion_text=fixed)
+        event = directed('先去听课了，许愿工具自己跑完', mid='school')
+        await self.answer(event, invalid)
+        await event.send(NS(chain=[Plain(invalid)]))
+        self.ctx.llm_generate.assert_awaited_once()
+        self.assertEqual([fixed], self.sent)
+        await self.interject(Event('你也上课吗', mid='school-auto'), '我马上也要上课')
+        self.assertEqual([fixed], self.sent)
+        self.assertEqual(2, self.ctx.llm_generate.await_count)
+        self.assertNotIn(invalid, [r['text'] for r in self.rt.windows[self.route.key].rows if r['self']])
+
+    async def test_repaired_draft_cannot_reintroduce_personal_experience(self):
+        self.ctx.llm_generate.return_value = NS(completion_text='我以前上学时也这样')
+        await self.answer(directed('晚点再聊', mid='bad-repair'), '我马上要去上课了')
+        self.ctx.llm_generate.assert_awaited_once()
+        self.assertEqual([REPLY_FAILURE_NOTICE], self.sent)
+
+    async def test_both_paths_leave_old_topic_replies_in_background(self):
+        await self.answer(directed('测试服务启动不了', mid='service'), '哪个服务启动不了')
+        normal = directed('晚餐套餐六块钱', mid='meal')
+        req = request()
+        await self.rt.inject(normal, req, Part)
+        pack = json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
+        self.assertFalse(any(r['speaker']=='bot' for r in pack['focus_context']))
+        await self.rt.response(normal, NS(completion_text='这价格不错'))
+        await normal.send(NS(chain=[Plain('这价格不错')]))
+        await self.interject(Event('这套餐够吃吗', mid='meal-auto'), '看分量吧')
+        pack = json.loads(self.ctx.llm_generate.call_args.kwargs['prompt'])['ambient_data']
+        self.assertNotIn('哪个服务启动不了', [r['text'] for r in pack['focus_context']])
+        self.assertIn('哪个服务启动不了', [r['text'] for r in pack['recent_context']])
+
     async def test_repair_cannot_bypass_late_settings_or_expiry(self):
         for name in ('expiry', 'settings'):
             self.config['groups'][0]['enabled'] = True

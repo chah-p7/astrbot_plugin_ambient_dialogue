@@ -9,7 +9,7 @@ import statistics
 import time
 
 from .policy import display_name, normalized, stable_id
-from .learning import MENTION, addressing, mentions as message_mentions, plain_text, quote_source, reply_feedback, style_examples
+from .learning import MENTION, addressing, mentions as message_mentions, plain_text, quote_source, reply_feedback, style_examples, words
 
 
 def compact(value):
@@ -203,8 +203,30 @@ class Window:
         self.rows = deque((r for r in self.rows if r['member'] != member), maxlen=self.policy.raw_limit)
 
 
+TOPIC_CHANGE = re.compile(r'换(?:一个|个)?话题|说点别的|另(?:一件事|一个问题)|先不(?:说|聊)|不(?:说|聊)这个了')
+FOLLOW_ON = re.compile(r'^(?:那|这(?:个|样|点|种|些)|所以|但是|不过|而且|然后|也就是|换句话说)|'
+                       r'^(?:我)?(?:来|再)?试试[吧啊。！!~～]*$|'
+                       r'^(?:评价一下|看看这个|这[个张段条]呢|为啥|为什么|咋办|怎么弄|什么意思|你说谁)[。！？!?~～]*$')
+RECALL_REPLY = re.compile(r'你(?:刚才|之前|前面|上句)(?:是)?(?:说|讲|问)|(?:刚才|之前|前面)你(?:说|讲|问)|再说一遍')
+
+
+def continues_topic(current, previous, *, adjacent=False):
+    """Local evidence only; uncertainty leaves a line in background, not focus."""
+    text, before = plain_text(current['text']), plain_text(previous['text'])
+    if TOPIC_CHANGE.search(text):
+        return False
+    # Shared pronouns, time words and generic verb endings are not a topic.
+    filler = {'不了', '可以', '不能', '不会', '知道', '不知', '不懂', '今天', '明天', '昨天',
+              '时候', '的时', '我也', '我都', '我的', '你的', '他的', '还是', '这么', '那么',
+              '为什', '么办', '没有', '有点', '点了', '一下', '一会', '说了', '我说'}
+    if (words(text) & words(before)) - filler:
+        return True
+    return bool(adjacent and 0 <= current['at']-previous['at'] <= 30
+                and (current.get('attention_only') or FOLLOW_ON.search(text)))
+
+
 def focus_rows(rows, current):
-    """Pin verified quote ancestors; label nearby same-speaker lines as hints."""
+    """Pin verified quotes and supported continuations, never identity alone."""
     if not current:
         return []
     selected, seen = [], {current['id']}
@@ -220,21 +242,38 @@ def focus_rows(rows, current):
 
     chain(current, 'direct_quote')
     if not current.get('quote'):
-        # Adjacency is not a reply edge, especially in a busy room.
+        # Walk a continuous same-speaker burst, stopping at a topic boundary.
+        follow = current
         for row in reversed(rows):
             if (row['id'] not in seen and row['sender'] == current['sender']
                     and 0 <= current['at']-row['at'] <= 90):
-                if row.get('command'):
+                if row.get('command') or not continues_topic(follow, row, adjacent=True):
                     break
                 seen.add(row['id'])
                 selected.append((row, 'same_speaker_recent'))
+                follow = row
+                # A verified quote anchors this burst in its own conversation.
+                if row.get('quote'):
+                    chain(row, 'reply_anchor')
+                    break
                 if sum(reason == 'same_speaker_recent' for _, reason in selected) == 2:
                     break
         # Only a confirmed reply to this account, never the room's last bot line.
         previous = next((r for r in reversed(rows) if r['self'] and not r.get('attachment')
                          and (r.get('quote') or {}).get('sender') == current['sender']
                          and 0 <= current['at']-r['at'] <= 180), None)
-        if previous and previous['id'] not in seen:
+        anchor, _ = quote_source(previous, rows) if previous else (None, '')
+        # A vague "why" can follow the last room message, but cannot jump over
+        # intervening conversations to an old bot response to the same account.
+        last = next((r for r in reversed(rows) if r['id'] != current['id'] and not r.get('command')), None)
+        changed = previous and any(r['sender'] == current['sender'] and previous['at'] < r['at'] <= current['at']
+                                   and TOPIC_CHANGE.search(plain_text(r['text'])) for r in rows)
+        topic_rows = [current] + [r for r, _ in selected]
+        related = previous and not changed and (
+            RECALL_REPLY.search(plain_text(current['text']))
+            or continues_topic(current, previous, adjacent=last is previous)
+            or (anchor and any(continues_topic(r, anchor) for r in topic_rows)))
+        if related and previous['id'] not in seen:
             seen.add(previous['id'])
             selected.append((previous, 'last_reply_to_speaker'))
             chain(previous, 'reply_anchor')

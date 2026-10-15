@@ -105,6 +105,57 @@ class GroundingTests(unittest.TestCase):
         current = self.row('你说谁呢', 'current', 'A', directed=True)
         self.assertEqual([], self.pack([other, ours, current], current)['focus_context'])
 
+    def test_unrelated_same_account_exchange_stays_in_background(self):
+        start = self.row('测试接口启动不了', 'start', 'A', 160)
+        ours = self.row('哪个服务启动不了', 'ours', '12345', 140,
+                        quote={'id': 'start', 'sender': 'A', 'text': start['text']})
+        meal = self.row('饭店套餐只要六块钱', 'meal', 'A', 17)
+        current = self.row('这点钱够成本吗', 'current', 'A', directed=True)
+        pack = self.pack([start, ours, meal, current], current)
+        self.assertEqual([meal['text']], [r['text'] for r in pack['focus_context']])
+        self.assertIn(ours['text'], [r['text'] for r in pack['recent_context']])
+
+    def test_complete_new_topic_does_not_pin_even_an_immediate_same_sender_line(self):
+        start = self.row('这个服务今天也启动不了', 'start', 'A', 5)
+        current = self.row('今天的晚餐我也吃不了', 'current', 'A')
+        self.assertEqual([], self.pack([start, current], current)['focus_context'])
+
+    def test_same_topic_reply_and_explicit_recall_keep_verified_anchor(self):
+        start = self.row('接口连接超时', 'start', 'A', 130)
+        ours = self.row('先检查网络', 'ours', '12345', 120,
+                        quote={'id': 'start', 'sender': 'A', 'text': start['text']})
+        for text in ('接口连接还是超时', '你刚才说了什么'):
+            current = self.row(text, 'current', 'A', directed=True)
+            focus = self.pack([start, ours, current], current)['focus_context']
+            self.assertEqual([ours['text'], start['text']], [r['text'] for r in focus])
+            self.assertEqual(['last_reply_to_speaker', 'reply_anchor'], [r['relevance'] for r in focus])
+
+    def test_vague_followup_cannot_jump_over_another_conversation(self):
+        start = self.row('接口连接超时', 'start', 'A', 40)
+        ours = self.row('先检查网络', 'ours', '12345', 20,
+                        quote={'id': 'start', 'sender': 'A', 'text': start['text']})
+        current = self.row('为什么', 'current', 'A', directed=True)
+        self.assertIn(ours['text'], [r['text'] for r in self.pack([start, ours, current], current)['focus_context']])
+        other = self.row('午饭店关门了', 'other', 'B', 5)
+        self.assertEqual([], self.pack([start, ours, other, current], current)['focus_context'])
+
+    def test_topic_change_stops_implicit_focus_but_not_an_explicit_quote(self):
+        start = self.row('接口报错', 'start', 'A', 60)
+        ours = self.row('接口日志贴一下', 'ours', '12345', 50,
+                        quote={'id': 'start', 'sender': 'A', 'text': start['text']})
+        changed = self.row('先不聊接口，晚饭吃什么', 'changed', 'A', 10)
+        current = self.row('那吃什么', 'current', 'A')
+        focus = self.pack([start, ours, changed, current], current)['focus_context']
+        self.assertEqual([changed['text']], [r['text'] for r in focus])
+        current['quote'] = {'id': 'ours', 'sender': '12345', 'text': ours['text']}
+        self.assertEqual([ours['text'], start['text']], [r['text'] for r in self.pack([start, ours, changed, current], current)['focus_context']])
+
+    def test_short_trial_followup_keeps_its_source_without_older_topic(self):
+        old = self.row('晚饭要吃面条', 'old', 'A', 20)
+        source = self.row('不知道这接口能不能连上', 'source', 'A', 3)
+        current = self.row('我来试试', 'current', 'A')
+        self.assertEqual([source['text']], [r['text'] for r in self.pack([old, source, current], current)['focus_context']])
+
     def test_style_selection_does_not_backfill_unrelated_topics(self):
         source = self.row('这门实验课有用吗', 'source', 'A', 90)
         reply = self.row('有用，治失眠', 'reply', 'B', 80,
@@ -124,6 +175,37 @@ class GroundingTests(unittest.TestCase):
         for text in ('你说的“我们学校”是哪所', '我没有学校', '我们学校是编的，我刚才说错了',
                      '我们群还挺热闹', '我觉得这课没意思', '“我室友昨天也这样”是他原话'):
             self.assertEqual('', reply_rejection(text, current, window), text)
+
+    def test_embedded_school_and_work_experiences_are_rejected_on_both_paths(self):
+        current = self.row('先去听课了，许愿工具自己跑完', 'current', 'A', directed=True)
+        window = Window(Policy(), [current])
+        for text in ('祈祷真有用我早不用写作业了', '要是能自动做完我今天也不用交作业了',
+                     '我马上要去上课了', '我以前读书的时候也这样', '我当年读过大学',
+                     '我昨晚还在公司', '我也得去上班', '哈哈我室友也这么说',
+                     '我没写完作业', '我不想上学', '我刚毕业', '我们学校没有食堂', '我室友没有交作业',
+                     '我在读大学', '我读的大学可没有这些', '我一会儿需要写作业', '我昨晚交论文去了'):
+            for auto in (False, True):
+                self.assertEqual('invented_personal_experience', reply_rejection(text, current, window, interject=auto), text)
+
+    def test_help_opinion_denial_and_explicit_fiction_are_not_biography(self):
+        current = self.row('帮忙看看作业', 'current', 'A', directed=True)
+        window = Window(Policy(), [current])
+        for text in ('我帮你写作业', '我可以解释这道题', '我觉得上课确实挺累',
+                     '我不用上学，也不需要写作业', '我从来没上过学', '我没有上过课', '我又没上过学',
+                     '他刚才说“我以前读书的时候也这样”', '他原话是「我要去上班了」',
+                     '如果我是学生，我也得写作业', '虚构例子：我当年读书时挺认真',
+                     '让我写作业是吧，题目贴一下', '我写作业批改脚本',
+                     '我正在查资料', '我刚刚发了两条消息', '我读这份报告再帮你看', '我读书给你听',
+                     '我写论文会先列提纲', '我写完实验报告了，你看一下'):
+            for auto in (False, True):
+                self.assertEqual('', reply_rejection(text, current, window, interject=auto), text)
+
+    def test_a_quote_or_fiction_does_not_hide_a_separate_personal_claim(self):
+        current = self.row('说说这门课', 'current', 'A', directed=True)
+        window = Window(Policy(), [current])
+        for text in ('他原话是“我要上课了”，我也要上课',
+                     '如果我是学生，我也得写作业。我以前上学时就是这样'):
+            self.assertEqual('invented_personal_experience', reply_rejection(text, current, window), text)
 
     def test_generic_pronouns_cannot_retrieve_an_unrelated_old_topic(self):
         old = self.row('我自己在折腾编译器', 'old', 'A', 600)
