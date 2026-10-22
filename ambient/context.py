@@ -144,7 +144,7 @@ def event_message(event, route, *, now=None):
     if not identity or not sender or len(identity) > 256:
         return None
     pieces, mentions, quote = [], [], None
-    attachment = False
+    attachment, image_count = False, 0
     for part in getattr(obj, 'message', ()):
         kind = type(part).__name__
         if kind == 'Plain':
@@ -161,6 +161,7 @@ def event_message(event, route, *, now=None):
                      'text': quoted_text[:240], 'truncated': len(quoted_text) > 240}
         elif kind in {'Image', 'Record', 'Video', 'File', 'Face'}:
             attachment = True
+            image_count += kind == 'Image'
             pieces.append({'Image': '[图片]', 'Record': '[语音]', 'Video': '[视频]',
                            'File': '[文件]', 'Face': '[表情]'}[kind])
     text = normalized(' '.join(pieces))[:1800]
@@ -194,7 +195,8 @@ def event_message(event, route, *, now=None):
             'name': display_name(event.get_sender_name(), sender), 'text': text,
             'at': at, 'self': self_message, 'command': body.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
-            'attention_only': attention_only, 'directed': directed}
+            'attention_only': attention_only, 'directed': directed,
+            **({'image_count': image_count} if image_count else {})}
 
 
 class Window:
@@ -203,6 +205,8 @@ class Window:
         self.style_excluded_senders = frozenset(style_excluded_senders)
         self.rows = deque(sorted(rows, key=lambda r: r['at']), maxlen=policy.raw_limit)
         self.identity_snapshot = {}
+        self.image_notes = {}
+        self.vision_enabled = False
 
     def add(self, row, now):
         self.trim(now)
@@ -216,9 +220,17 @@ class Window:
         retention = (self.policy.raw_hours * 3600 if self.policy.raw_hours else
                      max(self.policy.recent_minutes, self.policy.style_minutes) * 60)
         self.rows = deque((r for r in self.rows if now-r['at'] <= retention), maxlen=self.policy.raw_limit)
+        active = {r['id'] for r in self.rows}
+        self.image_notes = {k: v for k, v in self.image_notes.items() if k in active}
+        for key in list(self.image_notes):
+            if sum(map(len, self.image_notes.values())) <= self.policy.vision_cache_limit:
+                break
+            self.image_notes.pop(key)
 
     def forget(self, member):
         self.rows = deque((r for r in self.rows if r['member'] != member), maxlen=self.policy.raw_limit)
+        active = {r['id'] for r in self.rows}
+        self.image_notes = {k: v for k, v in self.image_notes.items() if k in active}
 
 
 RECALL_REPLY = re.compile(r'你(?:刚才|之前|前面|上句)(?:是)?(?:说|讲|问)|(?:刚才|之前|前面)你(?:说|讲|问)|再说一遍')
@@ -277,6 +289,29 @@ def focus_rows(rows, current, *, topic_seconds=900):
     return selected[:6]
 
 
+def visual_rows(rows, current, focused=None):
+    """Only attach a visible image occurrence; ambiguity never selects a stranger's photo."""
+    if not current:
+        return []
+    focused = focus_rows(rows, current) if focused is None else focused
+    if current.get('image_count') and not current.get('quote') and not re.search(
+            r'这[两几]张|对比|比较|上一张|前一张|和刚才', current['text']):
+        return [current]
+    selected = [r for r in [current, *(r for r, _ in focused)] if r.get('image_count')]
+    if not current.get('quote'):
+        selected = [r for r in selected if r['id'] == current['id'] or not any(
+            s.get('image_count') and s['sender'] != r['sender'] and r['at'] < s['at'] < current['at'] for s in rows)]
+    if selected or current.get('quote') or TOPIC_CHANGE.search(current['text']):
+        return list({r['id']: r for r in selected}.values())
+    if not re.search(r'(?:刚才|前面|上面|这|那)(?:张|个|几张)?(?:图|截图|照片|表情)|图[里上中]|这是什么', current['text']):
+        return []
+    recent = [r for r in rows if 0 < current['at']-r['at'] <= 90 and not r['self']]
+    images = [r for r in recent if r.get('image_count') and not r.get('command')]
+    if len(images) != 1 or any(r['at'] > images[0]['at'] and TOPIC_CHANGE.search(r['text']) for r in recent):
+        return []
+    return images
+
+
 def model_text(text, accounts):
     """Preserve mention positions while hiding stable platform identifiers."""
     return normalized(MENTION.sub(lambda m: '@'+accounts.get(m[1], 'bot' if m[1] == 'bot' else 'unknown'), text))
@@ -290,6 +325,9 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     if current and any(r['id'] == current['id'] for r in rows):
         rows = rows[:next(i for i, r in enumerate(rows) if r['id'] == current['id'])+1]
     focused = focus_rows(rows, current, topic_seconds=p.topic_minutes*60)
+    images = visual_rows(rows, current, focused) if window.vision_enabled else []
+    focused.extend((r, 'image_reference') for r in images if r['id'] != current['id']
+                   and all(s['id'] != r['id'] for s, _ in focused))
     recalled, lookup = recall_rows(rows, current, snapshot, excluded=window.style_excluded_senders)
     saved_examples = select_cases(snapshot.get('style_cases', []), rows, current, p, now,
                                   focused=[r for r, _ in focused], excluded=window.style_excluded_senders)
@@ -316,7 +354,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         if r.get('attention_only'):
             result['attention_only'] = True
         if MEDIA_ONLY.fullmatch(plain_text(r['text'])):
-            result['media_content_unavailable'] = True
+            result['media_content_unavailable'] = not (any(s['id'] == r['id'] for s in images) and
+                any(n['state'] == 'ready' for n in window.image_notes.get(r['id'], [])))
+        if r.get('image_count'):
+            result['image_count'] = r['image_count']
         if r.get('quote'):
             q = r['quote']
             source, link = quote_source(r, rows)
@@ -422,6 +463,11 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+    visual = [{'source_ref': ids.get(r['id'], 'current'), 'sender': aliases[r['member']], 'at': int(r['at']),
+               **{k:v for k,v in note.items() if k != 'digest'}} for r in images for note in window.image_notes.get(r['id'], [])]
+    if images:
+        pack['visual_context'] = bounded(visual, p.vision_context_chars)
+        pack['visual_context_incomplete'] = len(pack['visual_context']) != sum(r['image_count'] for r in images)
     lookup_names = identity_lookups(current, snapshot) if current else []
     if lookup_names:
         queries = [{'name': n['name'], 'status': n['status'],
@@ -441,10 +487,14 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context', 'visual_context'):
+        if key not in pack:
+            continue
         while pack[key] and len(compact(pack)) > p.pack_chars:
             pack[key].pop(0 if key == 'recent_context' else -1)
             pack['omitted_count'] += 1
+            if key == 'visual_context':
+                pack['visual_context_incomplete'] = True
     lookup['matched_messages'] = len(pack['recall_context']) + sum(
         any(item['ref'] == ids[r['id']] for item in pack['focus_context']) for r, _ in recalled)
     return pack

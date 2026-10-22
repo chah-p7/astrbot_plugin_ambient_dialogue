@@ -31,6 +31,9 @@ class Store:
         self.lock = RLock()
         self.learning = MemoryLearning(self)
         with self.connection() as db:
+            db.execute('''CREATE TABLE IF NOT EXISTS image_notes (
+                message TEXT, position INTEGER, member TEXT, at REAL, digest TEXT,
+                model TEXT, state TEXT, payload TEXT, PRIMARY KEY(message,position))''')
             db.executescript('''
                 PRAGMA journal_mode=DELETE;
                 CREATE TABLE IF NOT EXISTS meta (
@@ -201,9 +204,11 @@ class Store:
                 db.execute('BEGIN IMMEDIATE')
                 original = db.total_changes
                 self._trim_raw(db, now)
+                self._trim_images(db, now)
                 self.learning.trim(db, now, compress=compress)
                 if compress:
                     db.execute('DELETE FROM raw_messages')
+                    db.execute('DELETE FROM image_notes')
                 applied = self._apply_batch(db)
                 # An explicit expiry may retire a protected commitment. No
                 # heuristic guesses an expiry or silently completes a todo.
@@ -252,7 +257,8 @@ class Store:
             with self.connection() as db:
                 db.execute('UPDATE meta SET paused=? WHERE id=1 AND paused<>?', (int(paused), int(paused)))
             return {'before_bytes': before, 'after_bytes': self.size(), 'applied': applied,
-                    'paused': paused, 'target_reached': self.size() <= self.policy.quota_bytes * self.policy.target_ratio}
+                    'paused': paused, 'compressed': compress,
+                    'target_reached': self.size() <= self.policy.quota_bytes * self.policy.target_ratio}
 
     def _vacuum(self):
         with self.connection() as db:
@@ -343,6 +349,44 @@ class Store:
                 db.execute('INSERT OR IGNORE INTO raw_messages VALUES(?,?,?)',
                            (message['id'], message['at'], json.dumps(message, ensure_ascii=False)))
                 self._trim_raw(db, now)
+
+    def _trim_images(self, db, now):
+        db.execute('DELETE FROM image_notes WHERE at<?', (now-self.policy.raw_hours*3600,))
+        if not self.policy.raw_hours:
+            db.execute('DELETE FROM image_notes')
+        db.execute('DELETE FROM image_notes WHERE rowid NOT IN '
+                   '(SELECT rowid FROM image_notes ORDER BY at DESC LIMIT ?)', (self.policy.vision_cache_limit,))
+
+    def load_images(self, *, now):
+        with self.connection() as db:
+            self._trim_images(db, now)
+            result = {}
+            for row in db.execute('SELECT message,position,state,digest,payload FROM image_notes ORDER BY position'):
+                result.setdefault(row['message'], []).append({'number': row['position'], 'state': row['state'],
+                                                              'digest': row['digest'],
+                                                              **json.loads(row['payload'])})
+            return result
+
+    def cached_image(self, digest, model, *, now):
+        with self.connection() as db:
+            row = db.execute("SELECT payload FROM image_notes WHERE digest=? AND model=? AND state='ready' "
+                             'AND at>=? ORDER BY at DESC LIMIT 1',
+                             (digest, model, now-self.policy.raw_hours*3600)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def save_image(self, row, number, state, payload, digest, model, *, now):
+        with self.connection() as db:
+            self._trim_images(db, now)
+            reset = db.execute('SELECT at FROM learning_resets WHERE member=?', (row['member'],)).fetchone()
+            if (not self.policy.raw_hours or not 0 <= now-row['at'] <= self.policy.raw_hours*3600
+                    or (reset and row['at'] <= reset[0]) or self.size() >= self.policy.quota_bytes
+                    or not db.execute('SELECT 1 FROM raw_messages WHERE id=?', (row['id'],)).fetchone()):
+                return False
+            db.execute('INSERT OR REPLACE INTO image_notes VALUES(?,?,?,?,?,?,?,?)',
+                       (row['id'], number, row['member'], row['at'], digest, model, state,
+                        json.dumps(payload, ensure_ascii=False, separators=(',', ':'))))
+            self._trim_images(db, now)
+            return True
 
     def claim_delivery(self, anchor, text_hash, *, now=None):
         """One attempt per anchor/text, including uncertain outcomes and restart."""
@@ -444,6 +488,7 @@ class Store:
                 (r['member'] == member and (operation == 'forget_member' or r['id'] == fact_id))])
             if operation == 'forget_member':
                 self.learning.forget(db, member, now)
+                db.execute('DELETE FROM image_notes WHERE member=?', (member,))
                 db.execute('DELETE FROM members WHERE id=?', (member,))
                 # Delete this sender's raw cache too; runtime clears its RAM copy.
                 for row in db.execute('SELECT id,payload FROM raw_messages').fetchall():

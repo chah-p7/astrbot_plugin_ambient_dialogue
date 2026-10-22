@@ -44,7 +44,9 @@ class Interjections:
         state.event, state.current = event, row
         state.last_input = row['at']
         state.observed += 1
-        state.pending = not (row['command'] or row['self'] or row['attachment'] or row['directed'] or noise(row['text']))
+        image = row.get('image_count') and self.runtime.vision.enabled(route)
+        state.pending = not (row['command'] or row['self'] or (row['attachment'] and not image)
+                             or row['directed'] or (noise(row['text']) and not image))
         window = self.runtime.windows.get(route.key)
         targets, _ = addressing(row, list(window.rows) if window else [row])
         if not targets and window:
@@ -86,6 +88,12 @@ class Interjections:
             if now-state.last_input > p.interject_fresh_seconds:
                 state.pending, state.outcome = False, 'stale'
                 continue
+            if self.runtime.vision.pending(route, state.current):
+                state.outcome = 'waiting_for_image'
+                continue
+            if outcome := self.runtime.vision.gate(route, state.current):
+                state.pending, state.outcome = False, outcome
+                continue
             if len(self.tasks) >= 2:
                 break
             state.pending = False
@@ -104,6 +112,13 @@ class Interjections:
             transport = Transport(rt.context, event, route)
             provider, persona, identity = await self.identity(route, event)
             store, window = await rt.ensure(route)
+            await rt.vision.wait(route, current)
+            if rt.vision.pending(route, current):
+                state.pending, state.outcome = True, 'waiting_for_image'
+                return
+            if outcome := rt.vision.gate(route, current):
+                state.outcome = outcome
+                return
             snap = await asyncio.to_thread(store.snapshot)
             gate = await asyncio.to_thread(store.interjection_gate)
             anchor = stable_id(route.key, current['id'])
@@ -132,6 +147,7 @@ class Interjections:
                 chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+(STICKER_RULE if offered_stickers else '')+
                 (VIDEO_RULE if offered_videos else '')+
                 '\n你正在判断是否自然接入群聊。结合接话对象和近期反馈，只有读懂原意且有自然的接法才说；普通确认、办事问答和对别人的邀约可以安静旁听。'
+                '当前图片附有明确看图问题且没有指向其他成员时，优先结合 visual_context 回答；纯图片分享或表情不必每张点评。'
                 '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
                 '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
                 prompt=compact({'ambient_data': pack}), guard=draft_guard,

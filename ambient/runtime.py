@@ -20,6 +20,7 @@ from .transport import Transport
 from .search import generate, settings_id
 from .stickers import Stickers, STICKER_RULE, parse_sticker
 from .videos import BVID, VIDEO_RULE, Videos, parse_video, share_text
+from .vision import Vision
 
 
 logger = logging.getLogger('astrbot')
@@ -49,6 +50,7 @@ class Runtime:
         self.alias_learning = AliasLearning(self)
         self.stickers = Stickers(self)
         self.videos = Videos(self)
+        self.vision = Vision(self)
         self.closed = False
 
     def settings(self, route):
@@ -128,11 +130,13 @@ class Runtime:
                 store = await asyncio.to_thread(Store, self.root/'groups', route.key, policy)
                 rows = await asyncio.to_thread(store.load_raw, now=time.time())
                 self.stores[route.key], self.windows[route.key] = store, Window(policy, rows)
+                self.windows[route.key].image_notes = await asyncio.to_thread(store.load_images, now=time.time())
                 self.windows[route.key].identity_snapshot = await asyncio.to_thread(store.snapshot)
                 self.routes[route.key] = route
             p = self.policy(route)
             self.stores[route.key].policy = p
             self.windows[route.key].policy = p
+            self.windows[route.key].vision_enabled = self.vision.enabled(route)
             excluded = self.settings(route).get('style_excluded_senders', [])
             self.windows[route.key].style_excluded_senders = frozenset(
                 s.strip() for s in excluded if isinstance(s, str) and s.strip()
@@ -195,6 +199,7 @@ class Runtime:
                                         excluded=window.style_excluded_senders)
                 window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             self.stickers.observe(route, event, row)
+            self.vision.observe(route, event, row)
             self.interjections.observe(route, event, row, now=time.time())
 
     async def prepare(self, event):
@@ -237,6 +242,11 @@ class Runtime:
             await asyncio.to_thread(store.learning.learn, [row], cases=False, excluded=window.style_excluded_senders)
         snap = await asyncio.to_thread(store.snapshot)
         window.identity_snapshot = snap
+        self.vision.observe(route, event, row)
+        await self.vision.wait(route, row)
+        if self.closed or not self.owns(route) or not any(r['id'] == row['id'] for r in window.rows):
+            self.block(event, route, row, 'route_or_settings_changed')
+            return None
         pack = build_pack(window, snap, row, now=time.time(), memory_status=status)
         event.set_extra('ambient_sticker_choices', self.stickers.add_choices(route, pack))
         event.set_extra('ambient_video_choices', self.videos.add_choices(route, pack))
@@ -566,6 +576,7 @@ class Runtime:
         if text == '忘记我':
             await asyncio.to_thread(store.edit, 'forget_member', {}, member=member)
             window.forget(member)
+            self.vision.forget(route)
             window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             return '已删除你在本群的记忆和 Ambient 原话缓存。'
         if text.startswith(('删除 ', '完成 ')):
@@ -600,7 +611,10 @@ class Runtime:
                 if self.owns(self.routes[key]):
                     await asyncio.to_thread(store.learning.learn, list(self.windows[key].rows), now=now,
                                             excluded=self.windows[key].style_excluded_senders)
-                await asyncio.to_thread(store.maintain)
+                maintenance = await asyncio.to_thread(store.maintain)
+                if maintenance['compressed']:
+                    self.windows[key].image_notes.clear()
+                    self.vision.forget(self.routes[key])
                 self.windows[key].trim(now)
                 self.windows[key].identity_snapshot = await asyncio.to_thread(store.snapshot)
                 self.alias_learning.tick(self.routes[key])
@@ -615,7 +629,9 @@ class Runtime:
         return {'captured': self.captured, 'injected': self.injected, 'errors': self.errors,
                 'alias_learning': {stable_id(k)[:12]: v for k, v in self.alias_learning.outcomes.items()},
                 'videos': self.videos.status(),
+                'vision': {stable_id(k)[:12]: v for k, v in self.vision.statuses.items()},
                 'groups': {key: {'raw_in_memory': len(self.windows[key].rows),
+                    'vision_enabled': self.windows[key].vision_enabled,
                     'used_bytes': self.stores[key].size(),
                     'reply': self.replies.get(key, {}),
                     'interjection': {k: getattr(self.interjections.states.get(key), k, 0)
@@ -624,6 +640,7 @@ class Runtime:
     async def close(self):
         self.closed = True
         await self.alias_learning.close()
+        await self.vision.close()
         await self.interjections.close()
         await self.stickers.close()
         await self.videos.close()

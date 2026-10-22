@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "4cb2a583bbb84e1d9cd38b1f06a3e3aae11acb4ebe6a8dbad29773ee95782c0c"
+      "sha256": "f2ed9fe83d9c708066768671752758e3742736667763c23805e85a6ef346c8a7"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "7bf02ead72bc58727113bc68abebf69cf54df26f14cc571973d2c7f50fccaed1"
+      "sha256": "f74cc1a5f02ae7628974e9d9dba7f199c020e709a4728253a9c5e9860df36b24"
     },
     {
       "path": "ambient/__init__.py",
@@ -42,7 +42,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "40f5e732d2c3e38dfcb853f8bdea9a9142d761aa352d146dcaf8cd27d6e6a2a6"
+      "sha256": "0197cc249720266aafdcc2d45400dc7ec5f6dc8bc7475534955bbca14287f160"
     },
     {
       "path": "ambient/delivery.py",
@@ -58,7 +58,7 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "32f3dba0dac291733094a0d3abbf8a636a44922624fe4610843e7dbe0008e74c"
+      "sha256": "346112da18ec907fb67e59140d446ec6fdd302f445fa4a1a0abbf25d405bf3e5"
     },
     {
       "path": "ambient/learning.py",
@@ -70,7 +70,7 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "e9fe330a239df65391303408025b57f34633a1651ac5a169eca1ea9e0fe96831"
+      "sha256": "a46bf9340f3be6c8ffd283fdbe6b5092644bdcead8c314384ad52efe814ee37a"
     },
     {
       "path": "ambient/recall.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "ca7173c59c16d28ebe5331cb80db9284aaaf4d2621c45c989b5741664f2bbe91"
+      "sha256": "b8c1ecb2f257a94ceed901a23863536270b83f2cc997355e740be1ec6a7e848e"
     },
     {
       "path": "ambient/search.py",
@@ -98,7 +98,7 @@
     },
     {
       "path": "ambient/store.py",
-      "sha256": "13718f3b984a10469ac7f6ead1e2e6833500d45277f44e2d457330f62bf3f5d1"
+      "sha256": "45111554b0b4d540518cbc5ec95f358462f5c101595fe254c31d35496035c91b"
     },
     {
       "path": "ambient/transport.py",
@@ -107,6 +107,10 @@
     {
       "path": "ambient/videos.py",
       "sha256": "b78e4868f53b6b99acaeaf2e0d59697a80de055e95c38b2d76403c2966c0c7c5"
+    },
+    {
+      "path": "ambient/vision.py",
+      "sha256": "22b7e3dfcdc2fd9a79eaab41aa4e4b7c132d99a0ae84027f77c39923ae1f3d59"
     },
     {
       "path": "docs/MIGRATION.md",
@@ -126,7 +130,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "bd15ca37e8fbd83a3cd0f8094343f21f226f62966b4b3b6c8e745edf2fb4a6d9"
+      "sha256": "f5edadbd9b568cf0a6d4e3cdae24e2d7481bb21416d935f6a742bb1df6362d4b"
     },
     {
       "path": "pages/stickers/app.js",
@@ -199,6 +203,10 @@
     {
       "path": "tests/test_videos.py",
       "sha256": "01a4a78e4afb5cbe24718505ce0e83508f7e6d1ba95dfe898eb681d68dd4028b"
+    },
+    {
+      "path": "tests/test_vision.py",
+      "sha256": "72be348c321eb6c7c93fadb219cbe228b7f60c2a4a0e54162f329a0659d00f2a"
     },
     {
       "path": "tools/build_schema.py",
