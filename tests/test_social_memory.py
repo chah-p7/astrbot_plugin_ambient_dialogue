@@ -9,7 +9,7 @@ from ambient.aliases import known_names, name_targets
 from ambient.context import Window, build_pack, compact, event_message, focus_rows, route_for
 from ambient.examples import extract_cases, select_cases
 from ambient.learning import reaction_only
-from ambient.policy import Policy
+from ambient.policy import Policy, reply_rejection
 from ambient.runtime import Runtime
 from ambient.store import Store
 
@@ -105,6 +105,21 @@ class SocialMemoryTests(unittest.TestCase):
         self.assertNotIn('addressing', pack['current_message'])
         self.assertNotIn('aliases', card)
 
+    def test_identity_question_distinguishes_unique_ambiguous_and_unconfirmed(self):
+        self.member('A','新群名片')
+        self.learn([self.row('我的外号是小月','alias',ago=20)])
+        current=self.row('小月是谁','current','C')
+        def pack():return build_pack(Window(self.policy,[current]),self.store.snapshot(),current,now=self.now)
+        result=pack()
+        self.assertEqual('unique',result['identity_lookup']['status'])
+        target=result['identity_lookup']['speakers'][0]
+        self.assertNotEqual(target,result['current_speaker'])
+        self.assertEqual('新群名片',next(c['name'] for c in result['member_cards'] if c['speaker']==target))
+        self.member('B','小月')
+        self.assertEqual('ambiguous',pack()['identity_lookup']['status'])
+        current['text']='不认识的名字是谁'
+        self.assertEqual({'name':'不认识的名字','status':'unconfirmed','speakers':[]},pack()['identity_lookup'])
+
     def test_deleted_address_or_alias_cannot_return_from_backfill(self):
         member = self.member()
         self.store.edit('set', {'kind':'address','key':'address','text':'小星'}, member=member, now=self.now-30)
@@ -181,6 +196,20 @@ class SocialMemoryTests(unittest.TestCase):
         face=self.row('😅','face',ago=-2)
         follow=self.row('这开门软件居然有广告','follow',ago=-15)
         self.assertEqual(['answer','bot','ask'],[r['id'] for r,_ in focus_rows(rows+[face,follow],follow)])
+
+    def test_banter_cannot_invent_an_advertising_prerequisite(self):
+        current=self.row('这个扫码软件里居然有摇一摇广告','current')
+        window=Window(self.policy,[current])
+        for reply in ('扫码还得先摇一摇', '必须看完广告才能使用', '不摇还不给开'):
+            self.assertEqual('unsupported_ad_condition',reply_rejection(reply,current,window))
+        for reply in ('软件里又塞广告了', '那不摇还不给开？', '不用看完广告吧', '“必须看完广告”是你说的吗？'):
+            self.assertEqual('',reply_rejection(reply,current,window))
+        required={**current,'text':'必须看完广告才能用'}
+        self.assertEqual('',reply_rejection('还得先看完广告',required,Window(self.policy,[required])))
+        question={**current,'text':'这个软件必须看完广告才能用吗，查一下'}
+        self.assertEqual('',reply_rejection('需要先看完广告',question,Window(self.policy,[question])))
+        unrelated={**current,'text':'扫码软件又更新了'}
+        self.assertEqual('',reply_rejection('使用前要先看完说明',unrelated,Window(self.policy,[unrelated])))
 
     def test_archive_survives_raw_expiry_and_retrieves_by_scene(self):
         rows=self.pair()

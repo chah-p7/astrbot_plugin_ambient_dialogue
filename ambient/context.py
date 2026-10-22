@@ -13,7 +13,7 @@ from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_
                        mentions as message_mentions, plain_text, quote_source,
                        reaction_only, reply_feedback, same_speaker_context, short_answer, style_examples)
 from .recall import recall_rows
-from .aliases import known_names, name_key, name_targets
+from .aliases import identity_lookup, known_names, name_key, name_targets
 from .examples import select_cases
 
 
@@ -64,12 +64,12 @@ def participants(snapshot, people, current, focused=()):
                 accounts[account] = aliases[member]
             (priority if row is current else referenced).append(member)
     named, tentative = set(), {}
-    question = plain_text(current['text']) if current else ''
+    question = name_key(plain_text(current['text'])) if current else ''
     for member in members:
         accepted = known_names(snapshot, {**members[member], 'name': names.get(member, '')})
         pending = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member and a['kind'] == 'candidate']
         for name in [*accepted, *pending]:
-            if 2 <= len(name) <= 40 and re.search(r'(?<![A-Za-z0-9_])'+re.escape(name)+r'(?![A-Za-z0-9_])', question, re.I):
+            if 2 <= len(name) <= 40 and re.search(r'(?<![A-Za-z0-9_])'+re.escape(name_key(name))+r'(?![A-Za-z0-9_])', question):
                 named.add(member)
                 if name not in accepted:
                     tentative.setdefault(member, []).append(name)
@@ -415,6 +415,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+    lookup_name = identity_lookup(current, snapshot) if current else None
+    if lookup_name:
+        pack['identity_lookup'] = {'name': lookup_name['name'], 'status': lookup_name['status'],
+                                  'speakers': [accounts[a] for a in lookup_name['accounts'][:8] if a in accounts]}
     if pack['current_message']:
         pack['current_message']['text'] = pack['current_message']['text'][:p.pack_chars//3]
     # Total budget includes JSON overhead. Drop lowest priority fields first.

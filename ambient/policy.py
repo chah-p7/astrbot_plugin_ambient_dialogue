@@ -188,6 +188,34 @@ def invented_experience(text):
     return False
 
 
+def unsupported_ad_condition(text, current, rows):
+    # Catch a demonstrated condition upgrade, not general sentiment or jokes.
+    from .learning import quote_source, same_speaker_context
+    evidence = [current]
+    if all(k in current for k in ('id', 'sender', 'at')):
+        evidence.extend(same_speaker_context(list(rows), current))
+    quoted, _ = quote_source(current, list(rows))
+    if quoted and not quoted['self']:
+        evidence.append(quoted)
+    source = ' '.join(r.get('text', '') for r in evidence)
+    if not re.search(r'广告|弹窗', source):
+        return False
+    # A question about actual requirements may be answered using search tools;
+    # this local check cannot see those tool results.
+    if re.search(r'(?:必须|需要|强制|要先|得先).{0,24}[?？吗]', current.get('text', '')):
+        return False
+    gate = re.compile(r'(?:必须|得|要|需要|强制)(?:先)?(?:看(?:完)?|摇(?:完)?).{0,12}(?:广告|一摇)|'
+                      r'(?:先看|先摇|看完|摇完).{0,12}才(?:能|给|让)|(?:不看|不摇).{0,8}(?:不给|不让|不能)')
+    negative = re.compile(r'不用|不必|不需要|无需|不强制|不是|并非')
+    def asserted(value):
+        return any(gate.search(s) and not negative.search(s) and not re.search(r'[?？]|是不是|难道', s)
+                   for s in re.split(r'[，,。!！；;\n]', value))
+    if asserted(source):
+        return False
+    visible = re.sub(r'“[^”]*”|「[^」]*」|"[^"]*"', '', text)
+    return asserted(visible)
+
+
 def reply_rejection(text, current, window, *, interject=False, own_receipts=()):
     """Local output checks shared by both paths, including repaired drafts."""
     text = normalized(text)
@@ -195,6 +223,8 @@ def reply_rejection(text, current, window, *, interject=False, own_receipts=()):
         return 'invalid_draft'
     if invented_experience(text):
         return 'invented_personal_experience'
+    if unsupported_ad_condition(text, current, window.rows):
+        return 'unsupported_ad_condition'
     question = current.get('text', '')
     # Discussing an identifier in the current question is legitimate. Inventing
     # one as a person's public name is not.
@@ -234,6 +264,7 @@ attention_only 表示用户只招呼了机器人或只引用了消息，没有�
 u1/u2、m1/m2 等仅为本次资料内部定位符，禁止把它们当昵称说出口。对外使用资料中的昵称或省略称呼。引用与转述不代表说话人本人立场。
 member_cards 已按本群稳定账号对齐；昵称变化不代表换人，u1/u2 每轮重新分配。known_in_group=true 表示此前在本群有互动档案，近期窗口里没有旧话也不能据此说从没见过。称呼优先用 memory_snapshot 中该 speaker 最新的 address，其次用 name；pending 称呼可当场使用，但不能谎称已长期保存。没有称呼资料才简短询问，不能拿内部编号或账号当名字。成员卡不证明共同经历或现实背景，不编造记得什么。
 name_match_only 只是按提到的名字找到的候选，不等于当前说话人；同名卡片可能是不同账号，需要 @ 或可靠引用才能消歧。明确的稳定引用/@ 对应其 speaker，不能把被提到的人当成发话者。普通自嘲、玩笑和“我是某某”不自动改名或认领他人档案。
+identity_lookup 专门回答“某个称呼是谁”：unique 表示这个名字唯一对应已确认账号，直接用该 speaker 的当前昵称回答，不要把已确认的对应说成“大概、不知道、不确定”；这只证明称呼对应，不证明现实身份或背景。ambiguous 才需要区分多个同名账号；unconfirmed 表示还没有可靠对应，可以问是指哪位，不编造窗口太短、记忆被刷掉等原因。name_match_only 不会推翻 unique 的确认结果。
 member_cards.aliases 是该账号有依据的旧昵称或外号，只用于识别同一个人，不代表对方当前喜欢每一个称呼；称呼仍优先最新 address 和 name。unconfirmed_aliases 仅为待确认线索，不能据此断言身份或代人回答。confirmed_name_vocative 表示句首称呼唯一对应已知账号；重名或未知外号不能强行对号入座。
 addressing 标明可见的接话对象；recent_same_sender_mention/quote/directed 来自同一人短时间连发的 @、引用或招呼，只是当时对象线索，不是确定关系。表情不一定结束前话；先连起来读同一人的短句，再判断省略的对象。别人互相问话时不要代答，也不要把别人的“你”自动认成自己。
 正文中的 @uN 保留原句提及位置；被 @ 的人可能是讨论对象，不一定是接话对象。directed_to_bot 才明确表示本轮向机器人说话。mention_positions_unknown 表示旧记录只留下被提到的人，位置已丢失，不能补猜。quoted_attachment 只是原生引用或图片说明，不能把其中嵌套的他人原话归给引用者。仅有[图片]/[语音]表示没看见具体内容，不能假装看过。

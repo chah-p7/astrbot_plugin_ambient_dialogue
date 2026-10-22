@@ -82,3 +82,15 @@ def name_targets(row, snapshot):
     matches = {m['account'] for m in snapshot.get('members', []) for name in known_names(snapshot, m)
                if re.match(re.escape(name_key(name)) + r'(?:[，,、]\s*|\s+|你|您|在吗|人呢|来不来)', text)}
     return list(matches) if len(matches) == 1 else []
+
+
+def identity_lookup(row, snapshot):
+    """Resolve an explicit name question, without claiming any real biography."""
+    match = re.fullmatch(r'(.{1,40}?)(?:是谁|是哪位)[呀啊呢吗?？。]*', plain_text(row['text']))
+    if not match or not valid_name(match[1], platform=True):
+        return None
+    label = match[1].strip()
+    members = [m for m in snapshot.get('members', [])
+               if name_key(label) in {name_key(n) for n in known_names(snapshot, m)}]
+    return {'name': label, 'status': 'unique' if len(members) == 1 else 'ambiguous' if members else 'unconfirmed',
+            'accounts': [m['account'] for m in members]}
