@@ -13,6 +13,7 @@ from .delivery import send_reply_parts
 from .host import canonical_parts, route_send_tool
 from .learning import plain_text
 from .aliases import alias_cue
+from .alias_context import AliasLearning
 from .policy import Policy, REPLY_FAILURE_NOTICE, SYSTEM_RULES, candidate, normalized, reply_rejection, stable_id
 from .store import Store
 from .transport import Transport
@@ -22,7 +23,7 @@ from .videos import BVID, VIDEO_RULE, Videos, parse_video, share_text
 
 
 logger = logging.getLogger('astrbot')
-REPLY_ERROR_CODES = frozenset('''invalid_draft internal_alias binary_echo repeated_reply invented_personal_experience unsupported_ad_condition
+REPLY_ERROR_CODES = frozenset('''invalid_draft internal_alias binary_echo repeated_reply invented_personal_experience unsupported_ad_condition identity_reply_conflict
 route_or_settings_changed stale_before_send duplicate_delivery already_attempted_no_repair
 repair_context_expired_or_changed repair_provider_changed search_context_changed search_incomplete transport_route_expired_or_changed
 qq_native_contract_unavailable qq_reply_anchor_unavailable qq_client_changed
@@ -45,6 +46,7 @@ class Runtime:
         self.injected = 0
         self.captured = 0
         self.interjections = Interjections(self)
+        self.alias_learning = AliasLearning(self)
         self.stickers = Stickers(self)
         self.videos = Videos(self)
         self.closed = False
@@ -558,7 +560,7 @@ class Runtime:
                      f"；本群 {snap['used_bytes']//1024}/{snap['quota_bytes']//1024} KiB。"]
             lines.extend(f"{r['kind']} {r['key']}：{r['text']} [{r['id'][:12]}]" for r in facts)
             lines.extend(f"待整理 {r['kind']}：{r['text']} [{r['id'][:12]}]" for r in snap['candidates'])
-            lines.extend(f"称呼 {r['name']}（{ {'candidate':'待确认','rejected':'已停用'}.get(r['kind'],'已确认') }）[{r['id'][:12]}]" for r in snap['aliases'])
+            lines.extend(f"称呼 {r['name']}（{ {'candidate':'待确认','inferred':'上下文推断','rejected':'已停用'}.get(r['kind'],'已确认') }）[{r['id'][:12]}]" for r in snap['aliases'])
             lines.append('记住 类型 键=内容；删除 编号；完成 编号；忘记我。相同类型和键会纠正旧值。')
             return '\n'.join(lines)
         if text == '忘记我':
@@ -601,6 +603,7 @@ class Runtime:
                 await asyncio.to_thread(store.maintain)
                 self.windows[key].trim(now)
                 self.windows[key].identity_snapshot = await asyncio.to_thread(store.snapshot)
+                self.alias_learning.tick(self.routes[key])
             except Exception:
                 self.errors += 1
             self.next_maintenance[key] = now+store.policy.batch_seconds
@@ -610,6 +613,7 @@ class Runtime:
 
     def status(self):
         return {'captured': self.captured, 'injected': self.injected, 'errors': self.errors,
+                'alias_learning': {stable_id(k)[:12]: v for k, v in self.alias_learning.outcomes.items()},
                 'videos': self.videos.status(),
                 'groups': {key: {'raw_in_memory': len(self.windows[key].rows),
                     'used_bytes': self.stores[key].size(),
@@ -619,6 +623,7 @@ class Runtime:
 
     async def close(self):
         self.closed = True
+        await self.alias_learning.close()
         await self.interjections.close()
         await self.stickers.close()
         await self.videos.close()

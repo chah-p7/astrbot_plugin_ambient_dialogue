@@ -23,32 +23,41 @@ class MemoryLearning:
             CREATE TABLE IF NOT EXISTS style_cases (
                 id TEXT PRIMARY KEY, at REAL NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS learning_resets (member TEXT PRIMARY KEY, at REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS alias_scan (id INTEGER PRIMARY KEY CHECK(id=1), at REAL NOT NULL, source TEXT NOT NULL);
         ''')
 
-    def record_alias(self, db, member, name, kind, at, source, witness):
+    def record_alias(self, db, member, name, kind, at, source, witness, basis='', support=()):
         if not valid_name(name, platform=kind == 'platform'):
             return False
         key, ident = name_key(name), stable_id(member, 'alias', name_key(name))
         previous = db.execute('SELECT * FROM aliases WHERE id=?', (ident,)).fetchone()
         if previous:
-            if at < previous['at'] or (previous['kind'] == 'rejected' and kind not in {'self', 'rejected'}):
+            if ((at < previous['at'] and kind != 'candidate')
+                    or (previous['kind'] == 'rejected' and kind not in {'self', 'rejected'})):
                 return False
-            if previous['kind'] in {'self', 'platform'} and kind == 'candidate':
+            if previous['kind'] in {'self', 'platform', 'reviewed'} and kind == 'candidate':
                 return False
             if previous['kind'] == 'self' and kind == 'platform':
+                return False
+            if previous['kind'] == 'community' and kind == 'candidate' and basis == 'context':
                 return False
         if kind != 'rejected' and self.store.size() >= self.store.policy.quota_bytes:
             return False
         evidence = json.loads(previous['evidence']) if previous else []
         if any(e['source'] == source and e['by'] == witness for e in evidence):
             return False
-        evidence.append({'source': source, 'by': witness, 'at': at})
-        evidence = evidence[-6:]
-        if kind == 'candidate' and self.accepted(evidence):
-            kind = 'community'
+        entry = {'source': source, 'by': witness, 'at': at}
+        if basis:
+            entry['basis'] = basis
+            entry['support'] = [{k: r[k] for k in ('member', 'source', 'at')} for r in support[:8]]
+        evidence.append(entry)
+        evidence = sorted(evidence, key=lambda e: e['at'])[-6:]
+        if kind == 'candidate':
+            kind = self.evidence_kind(evidence)
+        recorded_at = max(at, previous['at'] if previous else at)
         value = json.dumps(evidence, ensure_ascii=False, separators=(',', ':'))
         db.execute('INSERT OR REPLACE INTO aliases VALUES(?,?,?,?,?,?,?,?)',
-                   (ident, member, key, name, kind, at, source[:256], value))
+                   (ident, member, key, name, kind, recorded_at, source[:256], value))
         if kind == 'rejected':
             # A denial beats both an old saved address and its pending copy.
             for table in ('facts', 'candidates'):
@@ -61,6 +70,63 @@ class MemoryLearning:
     def accepted(evidence):
         return (len(evidence) >= 3 and len({e['by'] for e in evidence}) >= 2
                 and max(e['at'] for e in evidence)-min(e['at'] for e in evidence) >= 60)
+
+    @classmethod
+    def evidence_kind(cls, evidence):
+        explicit = [e for e in evidence if e.get('basis') != 'context']
+        if cls.accepted(explicit):
+            return 'community'
+        if (len({e['source'] for e in evidence}) >= 2 and len({e['by'] for e in evidence}) >= 2
+                and max(e['at'] for e in evidence)-min(e['at'] for e in evidence) >= 60):
+            return 'inferred' if any(e.get('basis') == 'context' for e in evidence) else 'candidate'
+        return 'candidate'
+
+    def cursor(self):
+        with self.store.connection() as db:
+            row = db.execute('SELECT at,source FROM alias_scan WHERE id=1').fetchone()
+            return list(row) if row else [0, '']
+
+    def review_aliases(self, mappings, source, *, now=None):
+        """Explicit operator verification, never callable from model proposals."""
+        now = time.time() if now is None else now
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError('alias_review_source_required')
+        with self.store.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            members = {r[0] for r in db.execute('SELECT id FROM members')}
+            if any(m['member'] not in members or not valid_name(m['name']) for m in mappings):
+                raise ValueError('invalid_alias_review')
+            changed = sum(self.record_alias(db, m['member'], m['name'], 'reviewed', now,
+                                           source, 'operator') for m in mappings)
+            self.trim(db, now)
+            if changed:
+                db.execute('UPDATE meta SET revision=revision+1 WHERE id=1')
+        return changed
+
+    def apply_context(self, items, batch, *, now):
+        with self.store.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('SELECT revision FROM meta WHERE id=1').fetchone()[0] != batch['revision']:
+                return 'memory_changed_retry'
+            if self.store.size() >= self.store.policy.quota_bytes:
+                return 'quota_paused'
+            members = {r[0] for r in db.execute('SELECT id FROM members')}
+            resets = dict(db.execute('SELECT member,at FROM learning_resets'))
+            changed = 0
+            for item in items:
+                evidence = [{'member': item['member'], 'at': item['at']},
+                            {'member': item['witness'], 'at': item['at']}, *item.get('support', [])]
+                if (item['member'] not in members or not 0 <= now-item['at'] <= self.store.policy.alias_days*86400
+                        or any(e['at'] <= resets.get(e['member'], 0) for e in evidence)):
+                    continue
+                changed += self.record_alias(db, **item)
+            self.trim(db, now)
+            if changed:
+                db.execute('UPDATE meta SET revision=revision+1 WHERE id=1')
+            old = db.execute('SELECT at,source FROM alias_scan WHERE id=1').fetchone()
+            if old is None or tuple(batch['cursor']) > tuple(old):
+                db.execute('INSERT OR REPLACE INTO alias_scan VALUES(1,?,?)', tuple(batch['cursor']))
+            return 'learned' if changed else 'no_new_alias'
 
     def learn(self, rows, *, now=None, excluded=(), cases=True):
         now = time.time() if now is None else now
@@ -121,7 +187,7 @@ class MemoryLearning:
 
     def trim(self, db, now, *, excluded=(), compress=False):
         p = self.store.policy
-        db.execute('DELETE FROM learning_resets WHERE at<?', (now-max(86400, p.raw_hours*3600),))
+        db.execute('DELETE FROM learning_resets WHERE at<?', (now-max(p.alias_days*86400, p.raw_hours*3600),))
         # Rejected labels last as long as the profile, preventing old evidence
         # from recreating a corrected name. All categories remain count bounded.
         db.execute("DELETE FROM aliases WHERE kind!='rejected' AND at<?", (now-p.alias_days*86400,))
@@ -160,11 +226,11 @@ class MemoryLearning:
         for row in db.execute('SELECT id,payload FROM style_cases').fetchall():
             if any(r['member'] == member for r in json.loads(row['payload'])['rows']):
                 db.execute('DELETE FROM style_cases WHERE id=?', (row['id'],))
-        for row in db.execute("SELECT * FROM aliases WHERE member!=? AND kind IN ('candidate','community')", (member,)).fetchall():
+        for row in db.execute("SELECT * FROM aliases WHERE member!=? AND kind IN ('candidate','community','inferred')", (member,)).fetchall():
             old = json.loads(row['evidence'])
-            evidence = [e for e in old if e['by'] != member]
+            evidence = [e for e in old if e['by'] != member and not any(s['member'] == member for s in e.get('support', []))]
             if not evidence:
                 db.execute('DELETE FROM aliases WHERE id=?', (row['id'],))
             elif evidence != old:
                 db.execute('UPDATE aliases SET evidence=?,kind=? WHERE id=?',
-                           (json.dumps(evidence), 'community' if self.accepted(evidence) else 'candidate', row['id']))
+                           (json.dumps(evidence), self.evidence_kind(evidence), row['id']))

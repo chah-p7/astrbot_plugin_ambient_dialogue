@@ -141,6 +141,11 @@ def quote_source(row, rows):
     """
     quote = row.get('quote') or {}
     ident, text = quote.get('id'), plain_text(quote.get('text', ''))
+    # QQ flattens nested replies into an outer message followed by ancestors.
+    # Only the outer message can identify the actual quoted author.
+    wrapper = re.fullmatch(r'=== 消息 1 ===\s*\[消息内容\]\s*(.*?)\s*\[消息类型\].*', text)
+    if wrapper and not ident:
+        text = wrapper[1].strip()
     if not ident and (quote.get('truncated') or not 2 <= len(text) < 240):
         return None, ''
     candidates = [r for r in rows if r['id'] != row['id'] and r['at'] <= row['at']

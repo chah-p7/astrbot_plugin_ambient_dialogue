@@ -48,6 +48,9 @@ class Policy:
     style_context_seconds: int = 30
     alias_limit: int = 5
     alias_days: int = 90
+    alias_context_messages: int = 48
+    alias_context_chars: int = 8000
+    alias_context_timeout_seconds: int = 120
     style_archive_limit: int = 40
     style_archive_days: int = 30
     style_case_chars: int = 320
@@ -102,6 +105,8 @@ class Policy:
                 'style_context_messages': (0, 4),
                 'style_context_seconds': (1, 120),
                 'alias_limit': (1, 12), 'alias_days': (7, 365),
+                'alias_context_messages': (24, 200), 'alias_context_chars': (4000, 24000),
+                'alias_context_timeout_seconds': (15, 240),
                 'style_archive_limit': (0, 200), 'style_archive_days': (1, 90),
                 'style_case_chars': (80, 600), 'topic_minutes': (1, 30),
             }.get(field.name, (1, max(fallback * 5, 10)))
@@ -226,6 +231,11 @@ def reply_rejection(text, current, window, *, interject=False, own_receipts=()):
     if unsupported_ad_condition(text, current, window.rows):
         return 'unsupported_ad_condition'
     question = current.get('text', '')
+    if re.search(r'对不上(?:号)?|没对上|不认得|不认识|记不住', text):
+        from .aliases import identity_lookups
+        lookups = identity_lookups(current, window.identity_snapshot)
+        if lookups and all(r['status'] == 'unique' for r in lookups):
+            return 'identity_reply_conflict'
     # Discussing an identifier in the current question is legitimate. Inventing
     # one as a person's public name is not.
     if any(alias not in question for alias in re.findall(r'(?<![A-Za-z0-9_])[um]\d+(?![A-Za-z0-9_])', text)):
@@ -264,8 +274,10 @@ attention_only 表示用户只招呼了机器人或只引用了消息，没有�
 u1/u2、m1/m2 等仅为本次资料内部定位符，禁止把它们当昵称说出口。对外使用资料中的昵称或省略称呼。引用与转述不代表说话人本人立场。
 member_cards 已按本群稳定账号对齐；昵称变化不代表换人，u1/u2 每轮重新分配。known_in_group=true 表示此前在本群有互动档案，近期窗口里没有旧话也不能据此说从没见过。称呼优先用 memory_snapshot 中该 speaker 最新的 address，其次用 name；pending 称呼可当场使用，但不能谎称已长期保存。没有称呼资料才简短询问，不能拿内部编号或账号当名字。成员卡不证明共同经历或现实背景，不编造记得什么。
 name_match_only 只是按提到的名字找到的候选，不等于当前说话人；同名卡片可能是不同账号，需要 @ 或可靠引用才能消歧。明确的稳定引用/@ 对应其 speaker，不能把被提到的人当成发话者。普通自嘲、玩笑和“我是某某”不自动改名或认领他人档案。
-identity_lookup 专门回答“某个称呼是谁”：unique 表示这个名字唯一对应已确认账号，直接用该 speaker 的当前昵称回答，不要把已确认的对应说成“大概、不知道、不确定”；这只证明称呼对应，不证明现实身份或背景。ambiguous 才需要区分多个同名账号；unconfirmed 表示还没有可靠对应，可以问是指哪位，不编造窗口太短、记忆被刷掉等原因。name_match_only 不会推翻 unique 的确认结果。
-member_cards.aliases 是该账号有依据的旧昵称或外号，只用于识别同一个人，不代表对方当前喜欢每一个称呼；称呼仍优先最新 address 和 name。unconfirmed_aliases 仅为待确认线索，不能据此断言身份或代人回答。confirmed_name_vocative 表示句首称呼唯一对应已知账号；重名或未知外号不能强行对号入座。
+identity_lookup 专门回答“某个称呼是谁”，identity_lookups 则逐个列出同一句中的多个查询。unique 表示这个名字唯一对应已确认账号，直接用该 speaker 的当前昵称回答；这只证明称呼对应，不证明现实身份或背景。probable 是多个真人上下文共同支持的推断，直接给出候选昵称并简短说明“从之前聊天看应该是…”，不要答成完全不认识，也不能假装本人明确确认过。ambiguous 需要区分多个同名账号；unconfirmed 表示还没有可靠对应，不能靠拆字、相近昵称或删除 bot 后缀猜。name_match_only 不会推翻 unique 的确认结果。每个查询分别判断，不把其中一人的资料套给另一人。
+tentative 只有少量候选证据，可以问“你说的是…吗”，不能当作已确认身份。matches 中的 name 是对应账号当前昵称，automated 区分真人与机器人；不能用 bot 的名字覆盖真人外号。
+询问称呼对应时直接回答查询的对应关系即可。已确认后不要又补一句“对不上号、不认识、记不住”，也不要评价外号和本人搭不搭；这会否定前面已经确认的回答。
+member_cards.aliases 是该账号有依据的旧昵称或外号；inferred_aliases 来自多个真人场景的推断，支持 probable 查询，但不等于明确确认。unconfirmed_aliases 仅为待确认线索，不能据此断言身份或代人回答。automated=true 的卡片是机器人，不能替代名称相似的真人。称呼仍优先最新 address 和 name。confirmed_name_vocative 表示句首称呼唯一对应已知账号；重名或未知外号不能强行对号入座。
 addressing 标明可见的接话对象；recent_same_sender_mention/quote/directed 来自同一人短时间连发的 @、引用或招呼，只是当时对象线索，不是确定关系。表情不一定结束前话；先连起来读同一人的短句，再判断省略的对象。别人互相问话时不要代答，也不要把别人的“你”自动认成自己。
 正文中的 @uN 保留原句提及位置；被 @ 的人可能是讨论对象，不一定是接话对象。directed_to_bot 才明确表示本轮向机器人说话。mention_positions_unknown 表示旧记录只留下被提到的人，位置已丢失，不能补猜。quoted_attachment 只是原生引用或图片说明，不能把其中嵌套的他人原话归给引用者。仅有[图片]/[语音]表示没看见具体内容，不能假装看过。
 style_samples 先按场景、话题和来话意图选取，再参考说话人；只借鉴最贴近当前情况的一两段，不混合模仿所有样本。native_quote 和 quoted_text_exact 的 lead_in 是有引用依据的前话，text 是群友接法；nearby 只是按时间排列的邻近前话，可能各聊各的，不能据此认定谁回复了谁。single 没有已核实的回复对象。用完整片段理解省略和连发短句，不把单句当万能回复模板。

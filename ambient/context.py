@@ -13,7 +13,7 @@ from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_
                        mentions as message_mentions, plain_text, quote_source,
                        reaction_only, reply_feedback, same_speaker_context, short_answer, style_examples)
 from .recall import recall_rows
-from .aliases import identity_lookup, known_names, name_key, name_targets
+from .aliases import identity_lookups, known_names, name_key, name_targets
 from .examples import select_cases
 
 
@@ -67,7 +67,7 @@ def participants(snapshot, people, current, focused=()):
     question = name_key(plain_text(current['text'])) if current else ''
     for member in members:
         accepted = known_names(snapshot, {**members[member], 'name': names.get(member, '')})
-        pending = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member and a['kind'] == 'candidate']
+        pending = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member and a['kind'] in {'candidate', 'inferred'}]
         for name in [*accepted, *pending]:
             if 2 <= len(name) <= 40 and re.search(r'(?<![A-Za-z0-9_])'+re.escape(name_key(name))+r'(?![A-Za-z0-9_])', question):
                 named.add(member)
@@ -89,11 +89,14 @@ def participants(snapshot, people, current, focused=()):
         if member in named and (not current or member != current['member']):
             card['name_match_only'] = True
         accepted = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member
-                    and a['kind'] not in {'candidate', 'rejected'} and a['name'] != card['name']]
+                    and a['kind'] not in {'candidate', 'inferred', 'rejected'} and a['name'] != card['name']]
         if accepted:
             card['aliases'] = list(dict.fromkeys(accepted))
         if member in tentative:
             card['unconfirmed_aliases'] = tentative[member]
+        inferred = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member and a['kind'] == 'inferred']
+        if inferred:
+            card['inferred_aliases'] = inferred
         cards.append(card)
     return aliases, accounts, names, cards
 
@@ -295,6 +298,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     people.extend(r for case in saved_examples for r in case['rows'])
     aliases, accounts, names, cards = participants(snapshot, people, current,
                                                   [r for r, _ in focused + recalled])
+    automated = {accounts[a] for a in window.style_excluded_senders if a in accounts}
+    for card in cards:
+        if card['speaker'] in automated:
+            card['automated'] = True
     ids = {r['id']: 'm'+str(i+1) for i, r in enumerate(rows)}
 
     def render(r):
@@ -415,10 +422,20 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
-    lookup_name = identity_lookup(current, snapshot) if current else None
-    if lookup_name:
-        pack['identity_lookup'] = {'name': lookup_name['name'], 'status': lookup_name['status'],
-                                  'speakers': [accounts[a] for a in lookup_name['accounts'][:8] if a in accounts]}
+    lookup_names = identity_lookups(current, snapshot) if current else []
+    if lookup_names:
+        queries = [{'name': n['name'], 'status': n['status'],
+                    'speakers': [accounts[a] for a in n['accounts'][:8] if a in accounts]} for n in lookup_names]
+        by_account = {m['account']: m for m in snapshot.get('members', [])}
+        for query, result in zip(queries, lookup_names):
+            if result['accounts']:
+                query['matches'] = [{'speaker': accounts[a], 'name': by_account[a]['name'],
+                                     'automated': a in window.style_excluded_senders}
+                                    for a in result['accounts'][:8] if a in accounts]
+        if len(queries) == 1:
+            pack['identity_lookup'] = queries[0]
+        else:
+            pack['identity_lookups'] = queries
     if pack['current_message']:
         pack['current_message']['text'] = pack['current_message']['text'][:p.pack_chars//3]
     # Total budget includes JSON overhead. Drop lowest priority fields first.

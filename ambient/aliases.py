@@ -71,7 +71,7 @@ def known_names(snapshot, member):
     names = [member.get('name', '')]
     names += [r['text'] for r in snapshot.get('facts', []) + snapshot.get('candidates', [])
               if r['member'] == key and r['kind'] == 'address']
-    names += [a['name'] for a in aliases if a['kind'] not in {'candidate', 'rejected'}]
+    names += [a['name'] for a in aliases if a['kind'] not in {'candidate', 'inferred', 'rejected'}]
     return list(dict.fromkeys(n for n in names if n and name_key(n) not in rejected))
 
 
@@ -86,11 +86,29 @@ def name_targets(row, snapshot):
 
 def identity_lookup(row, snapshot):
     """Resolve an explicit name question, without claiming any real biography."""
-    match = re.fullmatch(r'(.{1,40}?)(?:是谁|是哪位)[呀啊呢吗?？。]*', plain_text(row['text']))
-    if not match or not valid_name(match[1], platform=True):
-        return None
-    label = match[1].strip()
+    lookups = identity_lookups(row, snapshot)
+    return lookups[0] if len(lookups) == 1 else None
+
+
+def identity_lookups(row, snapshot):
+    text = re.sub(r'^(?:请问|那|所以|再问一下)\s*', '', plain_text(row['text']))
+    labels = re.findall(r'(?:^|[，,；;。\s])([^，,；;。?？]{2,40}?)(?:是谁|是哪位)[呀啊呢吗?？]*', text)
+    return [lookup_name(label.strip(), snapshot) for label in dict.fromkeys(labels)
+            if valid_name(label.strip(), platform=True)][:5]
+
+
+def lookup_name(label, snapshot):
     members = [m for m in snapshot.get('members', [])
                if name_key(label) in {name_key(n) for n in known_names(snapshot, m)}]
+    if not members:
+        inferred = {a['member'] for a in snapshot.get('aliases', [])
+                    if a['key'] == name_key(label) and a['kind'] == 'inferred'}
+        pending = {a['member'] for a in snapshot.get('aliases', [])
+                   if a['key'] == name_key(label) and a['kind'] == 'candidate'}
+        matches = [m for m in snapshot.get('members', []) if m['id'] in inferred | pending]
+        if matches:
+            status = ('probable' if matches[0]['id'] in inferred else 'tentative') if len(matches) == 1 else 'ambiguous'
+            return {'name': label, 'status': status,
+                    'accounts': [m['account'] for m in matches]}
     return {'name': label, 'status': 'unique' if len(members) == 1 else 'ambiguous' if members else 'unconfirmed',
             'accounts': [m['account'] for m in members]}
