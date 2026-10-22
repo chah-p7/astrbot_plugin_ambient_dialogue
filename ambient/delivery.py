@@ -68,7 +68,8 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
     Every part repeats the caller's freshness/config checks at the HTTP boundary.
     Any uncertain part stops the sequence; no retry or automatic resumption.
     """
-    parts = split_reply(text, policy.reply_segment_chars)
+    # A video preview keeps its short caption and clickable URL together.
+    parts = [text.strip()] if card and 'data' in card and text.strip() else split_reply(text, policy.reply_segment_chars)
     if max_parts is not None and max_parts < 1:
         raise ValueError('qq_reply_slots_exhausted')
     if card and sticker:
@@ -77,6 +78,9 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
         # Do not leave a caption without its video or combine them in one bubble.
         raise ValueError('qq_reply_slots_exhausted')
     media = None
+    if card and 'data' in card:
+        # Prepare before the caption. Failure here has no visible side effect.
+        media = await asyncio.wait_for(transport.prepare_image(card['data']), 20)
     # Text and image always have separate receipts/bubbles. When only one
     # native slot remains, keep the complete answer and omit the optional image.
     if sticker and not (parts and max_parts == 1):
@@ -95,8 +99,8 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
             parts = parts[:text_slots-1] + ['\n\n'.join(parts[text_slots-1:])]
     messages = [(part, {}) for part in parts]
     if media:
-        messages.append(('[表情包：'+sticker['caption']+']', {'media': media}))
-    if card:
+        messages.append((card['text'] if card else '[表情包：'+sticker['caption']+']', {'media': media}))
+    if card and 'ark' in card:
         messages.append((card['text'], {'ark': card['ark']}))
     receipts = []
     for index, (part, attachment) in enumerate(messages):

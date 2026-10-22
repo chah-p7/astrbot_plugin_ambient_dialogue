@@ -40,11 +40,12 @@
             "default": false,
             "hint": "从公开视频列表选材，由当前回复或插话决定是否分享短配文＋原链接；不登录 B 站、不在评论区发消息。"
           },
-          "video_card_enabled": {
-            "type": "bool",
-            "description": "QQ 官方视频大图卡片（配文分开发送）",
-            "default": false,
-            "hint": "需 QQ 平台 ARK 权限及 B 站链接、封面域名许可。仅 QQ 官方适配器生效；失败或回执不明不自动补发。"
+          "video_share_format": {
+            "type": "string",
+            "description": "视频分享样式",
+            "default": "link",
+            "options": ["link", "image", "ark"],
+            "hint": "link：配文＋链接；image：配文＋链接后单独发封面预览，无需 ARK 权限（需中文字体）；ark：QQ 官方大图卡片，需平台权限。"
           },
           "video_topics": {
             "type": "list",

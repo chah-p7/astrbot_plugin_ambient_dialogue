@@ -110,11 +110,20 @@ class Videos:
     def enabled(self, route):
         return self.rt.owns(route) and self.rt.settings(route).get('video_sharing_enabled') is True
 
-    def cards_enabled(self, route):
-        return route.adapter == 'qq_official' and self.rt.settings(route).get('video_card_enabled') is True
+    def share_format(self, route):
+        mode = self.rt.settings(route).get('video_share_format', 'link')
+        return mode if mode == 'image' or (mode == 'ark' and route.adapter == 'qq_official') else 'link'
 
-    def card(self, route, video):
-        return big_image_card(video) if self.cards_enabled(route) else None
+    async def card(self, route, video):
+        mode = self.share_format(route)
+        if mode == 'link':
+            return None
+        card = big_image_card(video)
+        if mode == 'image':
+            from .video_preview import fetch_cover, render_preview
+            cover = await fetch_cover(video['cover'])
+            return {'data': await asyncio.to_thread(render_preview, video, cover), 'text': card['text']}
+        return card
 
     def days(self, route):
         return bounded(self.rt.settings(route), 'video_dedupe_days', 30, 1, 90)
@@ -139,7 +148,7 @@ class Videos:
         for row in self.candidates.values():
             content = ' '.join(row[k] for k in ('title', 'description', 'category')).lower()
             if (row['id'] in seen or row['duration_seconds'] > maximum
-                    or (self.cards_enabled(route) and not row.get('cover'))
+                    or (self.share_format(route) != 'link' and not row.get('cover'))
                     or not 0 <= now-row['published_at'] <= 14*86400
                     or (topics and not any(t in content for t in topics))):
                 continue

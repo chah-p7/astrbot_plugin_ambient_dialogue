@@ -24,6 +24,28 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_preview_upload_then_separate_text_and_image_without_ark(self):
+        from ambient.delivery import send_reply_parts
+        from ambient.policy import Policy
+        card = {'data': b'preview-jpeg', 'text': '[B站视频：测试]\nhttps://www.bilibili.com/video/BV1234567890/'}
+        self.response = lambda: ({'file_info':'preview-file'} if self.calls[-1]['url'].endswith('/files')
+                                 else {'id':'receipt-'+str(len(self.calls))})
+        confirmed = AsyncMock()
+        gate = AsyncMock(side_effect=[10001,10002])
+        text = '配文\nhttps://www.bilibili.com/video/BV1234567890/'
+        receipts = await send_reply_parts(Transport(self.ctx, self.event, self.route), text,
+            Policy(reply_segment_chars=8, reply_segment_interval_ms=0), gate, confirmed,
+            max_parts=2, card=card)
+        upload, caption, image = [c['json'] for c in self.calls]
+        self.assertIs(upload['srv_send_msg'], False)
+        self.assertEqual([0,7], [caption['msg_type'],image['msg_type']])
+        self.assertEqual([text,''], [caption['content'],image['content']])
+        self.assertEqual([10001,10002], [caption['msg_seq'],image['msg_seq']])
+        self.assertEqual({'file_info':'preview-file'}, image['media'])
+        self.assertFalse(caption['ark'] or image['ark'])
+        self.assertEqual(['receipt-2','receipt-3'], receipts)
+        self.assertEqual(card['text'], confirmed.await_args_list[-1].args[0])
+
     async def test_official_big_card_has_separate_bubble_receipt_and_sequence(self):
         from ambient.delivery import send_reply_parts
         from ambient.policy import Policy

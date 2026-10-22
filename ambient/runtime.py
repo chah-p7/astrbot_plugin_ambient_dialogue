@@ -362,8 +362,8 @@ class Runtime:
                                                          event.get_extra('ambient_video_choices') or {})
                             if video:
                                 await self.videos.verify(video)
-                                card = self.videos.card(route, video)
-                                if not card:
+                                card = await self.videos.card(route, video)
+                                if not card or 'data' in card:
                                     text = share_text(text, video)
                                 sticker = None
                         else:
@@ -636,7 +636,7 @@ class Runtime:
                 'vision': {stable_id(k)[:12]: v for k, v in self.vision.statuses.items()},
                 'groups': {key: {'raw_in_memory': len(self.windows[key].rows),
                     'vision_enabled': self.windows[key].vision_enabled,
-                    'video_card_enabled': self.videos.cards_enabled(self.routes[key]),
+                    'video_share_format': self.videos.share_format(self.routes[key]),
                     'used_bytes': self.stores[key].size(),
                     'reply': self.replies.get(key, {}),
                     'interjection': {k: getattr(self.interjections.states.get(key), k, 0)

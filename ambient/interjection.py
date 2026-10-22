@@ -176,8 +176,8 @@ class Interjections:
             card = None
             if video:
                 await rt.videos.verify(video)
-                card = rt.videos.card(route, video)
-                if not card:
+                card = await rt.videos.card(route, video)
+                if not card or 'data' in card:
                     text = share_text(text, video)
 
             claimed = False

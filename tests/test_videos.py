@@ -200,7 +200,7 @@ class VideoCardFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await VideoFlowTests.asyncSetUp(self)
-        self.config['groups'][0]['video_card_enabled'] = True
+        self.config['groups'][0]['video_share_format'] = 'ark'
         self.wires = []
         owner = self
         class Sender:
@@ -270,7 +270,7 @@ class VideoCardFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_config_change_after_caption_stops_card(self):
         def change():
-            if self.sent: self.config['groups'][0]['video_card_enabled'] = False
+            if self.sent: self.config['groups'][0]['video_share_format'] = 'link'
         self.late_change = change
         await self.answer(unified.directed('发个视频'), '企鹅上班了 [[bilibili:'+FIRST+']]')
         self.assertEqual(['企鹅上班了'], self.sent)
@@ -283,7 +283,7 @@ class VideoCardFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(FIRST, offered)
         self.assertIn(SECOND, offered)
         self.assertNotIn('cover', pack['video_candidates'][0])
-        self.assertIsNone(self.rt.videos.card(replace(self.route, adapter='aiocqhttp'), offered[SECOND]))
+        self.assertIsNone(await self.rt.videos.card(replace(self.route, adapter='aiocqhttp'), offered[SECOND]))
 
 
 if __name__ == '__main__':
