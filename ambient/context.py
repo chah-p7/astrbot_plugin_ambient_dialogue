@@ -9,7 +9,10 @@ import statistics
 import time
 
 from .policy import display_name, normalized, stable_id
-from .learning import MENTION, addressing, mentions as message_mentions, plain_text, quote_source, reply_feedback, style_examples, words
+from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_topic,
+                       mentions as message_mentions, plain_text, quote_source,
+                       reply_feedback, same_speaker_context, style_examples)
+from .recall import recall_rows
 
 
 def compact(value):
@@ -203,26 +206,7 @@ class Window:
         self.rows = deque((r for r in self.rows if r['member'] != member), maxlen=self.policy.raw_limit)
 
 
-TOPIC_CHANGE = re.compile(r'换(?:一个|个)?话题|说点别的|另(?:一件事|一个问题)|先不(?:说|聊)|不(?:说|聊)这个了')
-FOLLOW_ON = re.compile(r'^(?:那|这(?:个|样|点|种|些)|所以|但是|不过|而且|然后|也就是|换句话说)|'
-                       r'^(?:我)?(?:来|再)?试试[吧啊。！!~～]*$|'
-                       r'^(?:评价一下|看看这个|这[个张段条]呢|为啥|为什么|咋办|怎么弄|什么意思|你说谁)[。！？!?~～]*$')
 RECALL_REPLY = re.compile(r'你(?:刚才|之前|前面|上句)(?:是)?(?:说|讲|问)|(?:刚才|之前|前面)你(?:说|讲|问)|再说一遍')
-
-
-def continues_topic(current, previous, *, adjacent=False):
-    """Local evidence only; uncertainty leaves a line in background, not focus."""
-    text, before = plain_text(current['text']), plain_text(previous['text'])
-    if TOPIC_CHANGE.search(text):
-        return False
-    # Shared pronouns, time words and generic verb endings are not a topic.
-    filler = {'不了', '可以', '不能', '不会', '知道', '不知', '不懂', '今天', '明天', '昨天',
-              '时候', '的时', '我也', '我都', '我的', '你的', '他的', '还是', '这么', '那么',
-              '为什', '么办', '没有', '有点', '点了', '一下', '一会', '说了', '我说'}
-    if (words(text) & words(before)) - filler:
-        return True
-    return bool(adjacent and 0 <= current['at']-previous['at'] <= 30
-                and (current.get('attention_only') or FOLLOW_ON.search(text)))
 
 
 def focus_rows(rows, current):
@@ -243,21 +227,11 @@ def focus_rows(rows, current):
     chain(current, 'direct_quote')
     if not current.get('quote'):
         # Walk a continuous same-speaker burst, stopping at a topic boundary.
-        follow = current
-        for row in reversed(rows):
-            if (row['id'] not in seen and row['sender'] == current['sender']
-                    and 0 <= current['at']-row['at'] <= 90):
-                if row.get('command') or not continues_topic(follow, row, adjacent=True):
-                    break
+        for row in same_speaker_context(rows, current):
+            if row['id'] not in seen:
                 seen.add(row['id'])
                 selected.append((row, 'same_speaker_recent'))
-                follow = row
-                # A verified quote anchors this burst in its own conversation.
-                if row.get('quote'):
-                    chain(row, 'reply_anchor')
-                    break
-                if sum(reason == 'same_speaker_recent' for _, reason in selected) == 2:
-                    break
+                chain(row, 'reply_anchor')
         # Only a confirmed reply to this account, never the room's last bot line.
         previous = next((r for r in reversed(rows) if r['self'] and not r.get('attachment')
                          and (r.get('quote') or {}).get('sender') == current['sender']
@@ -293,9 +267,11 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     if current and any(r['id'] == current['id'] for r in rows):
         rows = rows[:next(i for i, r in enumerate(rows) if r['id'] == current['id'])+1]
     focused = focus_rows(rows, current)
+    recalled, lookup = recall_rows(rows, current, snapshot, excluded=window.style_excluded_senders)
     people = [current] if current else []
     people.extend(reversed(rows))
-    aliases, accounts, names, cards = participants(snapshot, people, current, [r for r, _ in focused])
+    aliases, accounts, names, cards = participants(snapshot, people, current,
+                                                  [r for r, _ in focused + recalled])
     ids = {r['id']: 'm'+str(i+1) for i, r in enumerate(rows)}
 
     def render(r):
@@ -309,6 +285,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                 result['automated'] = True
         if r.get('attention_only'):
             result['attention_only'] = True
+        if MEDIA_ONLY.fullmatch(plain_text(r['text'])):
+            result['media_content_unavailable'] = True
         if r.get('quote'):
             q = r['quote']
             source, link = quote_source(r, rows)
@@ -373,8 +351,12 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                        'text': r['text'], 'at': int(r['at']), 'state': r.get('state', 'committed')})
     focus = bounded([{**render(r), 'relevance': reason} for r, reason in focused], min(p.recent_chars, p.pack_chars//2))
     focus_ids = {r['ref'] for r in focus}
-    context_rows = bounded([render(r) for r in reversed(recent) if ids[r['id']] not in focus_ids],
-                           max(0, p.recent_chars-len(compact(focus))))
+    recall = bounded([{**render(r), 'relevance': reason} for r, reason in recalled if ids[r['id']] not in focus_ids],
+                     min(1600, max(0, p.recent_chars-len(compact(focus)))))
+    evidence_ids = focus_ids | {r['ref'] for r in recall}
+    lookup['matched_messages'] = len(recall) + sum(ids[r['id']] in focus_ids for r, _ in recalled)
+    context_rows = bounded([render(r) for r in reversed(recent) if ids[r['id']] not in evidence_ids],
+                           max(0, p.recent_chars-len(compact(focus))-len(compact(recall))))
     context_rows.reverse()
     feedback_rows = bounded(feedback, min(700, p.style_chars//2))
     style_rows = bounded(style, p.style_chars-len(compact(feedback_rows)))
@@ -391,17 +373,20 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     pack = {'generated_at': int(now), 'current_message': render(current) if current else None,
             'current_speaker': aliases.get(current['member']) if current else None,
             'memory_request_status': memory_status, 'focus_context': focus, 'recent_context': context_rows,
+            'recall_context': recall, 'memory_lookup': lookup,
             'member_cards': member_cards,
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
-            'omitted_count': sum(ids[r['id']] not in focus_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+            'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
     if pack['current_message']:
         pack['current_message']['text'] = pack['current_message']['text'][:p.pack_chars//3]
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'focus_context'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context'):
         while pack[key] and len(compact(pack)) > p.pack_chars:
             pack[key].pop(0 if key == 'recent_context' else -1)
             pack['omitted_count'] += 1
+    lookup['matched_messages'] = len(pack['recall_context']) + sum(
+        any(item['ref'] == ids[r['id']] for item in pack['focus_context']) for r, _ in recalled)
     return pack

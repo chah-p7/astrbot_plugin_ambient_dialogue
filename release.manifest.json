@@ -18,7 +18,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "07f907c4eec7d46ecc98b8d5613c732231e149c307a3e5056ae4b081dcfee507"
+      "sha256": "984d00e12f124515abc20c10047298b4bff33d7520333941c7431b949173bdd5"
     },
     {
       "path": "_conf_schema.json",
@@ -30,7 +30,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "13e93a01616651a6a511ee7a67b609897fe4e9c057ab0ed2b94e0b3603b7fbb4"
+      "sha256": "42c4c71baf8d2b39c11cc01791e978bbb27bc62e1fa9047735b7c0db2595dc52"
     },
     {
       "path": "ambient/delivery.py",
@@ -42,15 +42,19 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "7a418eb2de9f0e7e237eab3b9305fc807c52ef6b9a01071206e239842eb9b2ad"
+      "sha256": "4955c41f81650aad4d657794e5eef0714ae11440538280acd04a0644ebe572bc"
     },
     {
       "path": "ambient/learning.py",
-      "sha256": "775826118b2a8e09ffbc7f5627c2c65b1feb83f0913821afeaba1b5274473580"
+      "sha256": "2b99b5a819c5ae657d20780917523a1b28cf5bd15d7a0edf64aaaef38c448539"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "281f3e6ad0ee669d1776d21e6c79641963d45984b50c2c6185bc5298c4c7b685"
+      "sha256": "f93e1f81cb80a2646e66f8a1122a8ac2b68febae36263056f119287df857bd25"
+    },
+    {
+      "path": "ambient/recall.py",
+      "sha256": "b12f131534eeb294c3c8c7e95bdb12b3ad881dca9cd0a19adb2edc3ebe9de2dc"
     },
     {
       "path": "ambient/runtime.py",
@@ -102,7 +106,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "75cb9d9b7950f23094492d53e045b673f2a6e79611ee6ad94e7d5940a65b31b0"
+      "sha256": "a9491680e1344684b67594d79543d149eeca936091cac53471cfb552902808cf"
     },
     {
       "path": "pages/stickers/app.js",
@@ -143,6 +147,10 @@
     {
       "path": "tests/test_native.py",
       "sha256": "4b4429486daf56da0f263cc03e1d62d755bf78d27b244d796f87902a552de1e2"
+    },
+    {
+      "path": "tests/test_recall.py",
+      "sha256": "c54bb6833f32748f8df04263a92177f9417c806ef179804783eac979b3ac7625"
     },
     {
       "path": "tests/test_search.py",

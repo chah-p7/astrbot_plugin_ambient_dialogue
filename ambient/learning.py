@@ -11,6 +11,57 @@ from .policy import noise, normalized
 MENTION = re.compile(r'<@!?([A-Za-z0-9_-]{1,128})>')
 FORMAT_ORDER = re.compile(r'(?:以后|接下来|一直|每次|只能).{0,32}(?:回复|回答|回|发|扣)')
 SHORT_REACTION = re.compile(r'(?:嗯|哦|啊|诶|欸|呃|额|哈|呵|嘿|嘻){1,6}[。.!！~～…]*')
+TOPIC_CHANGE = re.compile(r'换(?:一个|个)?话题|说点别的|另(?:一件事|一个问题)|先不(?:说|聊)|不(?:说|聊)这个了')
+FOLLOW_ON = re.compile(r'^(?:那|这(?:个|样|点|种|些)|所以|但是|不过|而且|然后|也就是|换句话说|'
+                       r'没那么|不太|不够|还真|我说|你(?:的|个人|最好)|可以(?:先|等))|'
+                       r'^(?:我)?(?:来|再)?试试[吧啊。！!~～]*$|'
+                       r'^(?:评价一下|看看这个|这[个张段条]呢|为啥|为什么|咋办|怎么弄|什么意思|你说谁)[。！？!?~～]*$')
+MEDIA_ONLY = re.compile(r'(?:\[(?:图片|语音|视频|文件)[^\]]*\]\s*)+')
+
+
+def continues_topic(current, previous, *, adjacent=False):
+    """Continuity hints, not inferred reply edges or durable relationships."""
+    text, before = plain_text(current['text']), plain_text(previous['text'])
+    if TOPIC_CHANGE.search(text):
+        return False
+    filler = {'不了', '可以', '不能', '不会', '知道', '不知', '不懂', '今天', '明天', '昨天',
+              '时候', '的时', '我也', '我都', '我的', '你的', '他的', '还是', '这么', '那么',
+              '为什', '么办', '没有', '有点', '点了', '一下', '一会', '说了', '我说'}
+    if (words(text) & words(before)) - filler:
+        return True
+    gap = current['at']-previous['at']
+    if adjacent and 30 < gap <= 60 and re.match(r'^可以(?:先|等)', text):
+        return True
+    if not adjacent or not 0 <= gap <= 30:
+        return False
+    opener = (re.match(r'^\s*<@', previous['text']) and
+              re.fullmatch(r'(?:哦?对了|等下|在吗|我跟你说)[，,。！!？?~～]*', before))
+    caption = MEDIA_ONLY.fullmatch(before) and len(text) <= 20
+    return bool(current.get('attention_only') or FOLLOW_ON.search(text) or opener or caption)
+
+
+def same_speaker_context(rows, current):
+    """At most three short continuations; an intervening reaction is not a reset."""
+    before = rows[:next((i for i, r in enumerate(rows) if r['id'] == current['id']), len(rows))]
+    follow, selected, skipped = current, [], 0
+    for row in reversed(before):
+        if row['sender'] != current['sender'] or row['at'] > follow['at']:
+            continue
+        if current['at']-row['at'] > 90 or row.get('command') or TOPIC_CHANGE.search(plain_text(follow['text'])):
+            break
+        text = plain_text(row['text'])
+        if SHORT_REACTION.fullmatch(text) or re.fullmatch(r'(?:\[表情[^\]]*\]\s*)+', text):
+            if row.get('quote') or mentions(row) or skipped == 2:
+                break
+            skipped += 1
+            continue
+        if not continues_topic(follow, row, adjacent=True):
+            break
+        selected.append(row)
+        if row.get('quote') or MEDIA_ONLY.fullmatch(text) or len(selected) == 3:
+            break
+        follow = row
+    return selected
 
 
 @dataclass(frozen=True)
@@ -43,15 +94,18 @@ def addressing(row, rows):
     targets = mentions(row)
     if targets and not MENTION.search(row['text']):
         return targets, 'mention_positions_unknown'
-    # A short follow-on "那你…" can continue the same sender's explicit @.
-    # Label the inference; it must never become an asserted relationship.
-    if re.search(r'你|您', row['text']):
-        previous = next((r for r in reversed(rows) if r['sender'] == row['sender']
-                         and r['id'] != row['id'] and 0 <= row['at']-r['at'] <= 90), None)
-        if previous:
-            leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', previous['text'])
-            if leading:
-                return list(dict.fromkeys(MENTION.findall(leading[0]))), 'recent_same_sender_mention'
+    # An unresolved explicit quote must not inherit an unrelated older target.
+    if row.get('quote'):
+        return [], 'unspecified'
+    for previous in same_speaker_context(rows, row):
+        if previous.get('directed'):
+            return ['bot'], 'recent_same_sender_directed'
+        leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', previous['text'])
+        if leading:
+            return list(dict.fromkeys(MENTION.findall(leading[0]))), 'recent_same_sender_mention'
+        source, _ = quote_source(previous, rows)
+        if source:
+            return ['bot' if source['self'] else source['sender']], 'recent_same_sender_quote'
     return [], 'unspecified'
 
 
