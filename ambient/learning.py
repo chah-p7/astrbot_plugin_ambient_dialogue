@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import re
+import unicodedata
 
 from .policy import noise, normalized
 
@@ -19,6 +20,21 @@ FOLLOW_ON = re.compile(r'^(?:那|这(?:个|样|点|种|些)|所以|但是|不过
 MEDIA_ONLY = re.compile(r'(?:\[(?:图片|语音|视频|文件)[^\]]*\]\s*)+')
 
 
+def reaction_only(text):
+    text = plain_text(text)
+    return bool(SHORT_REACTION.fullmatch(text) or re.fullmatch(r'(?:\[表情[^\]]*\]\s*)+', text)
+                or (0 < len(text) <= 20 and any(ord(c) >= 0x2600 for c in text)
+                    and all(unicodedata.category(c)[0] in 'SPMZC' for c in text)))
+
+
+def short_answer(question, answer):
+    """A narrow answer to the room's last, still-unanswered bot question."""
+    answer = plain_text(answer)
+    return bool(len(answer) <= 20 and not TOPIC_CHANGE.search(answer) and
+                re.search(r'哪种|哪个|干嘛|什么用', question) and
+                re.search(r'用的[。！!]*$|^用来', answer))
+
+
 def continues_topic(current, previous, *, adjacent=False):
     """Continuity hints, not inferred reply edges or durable relationships."""
     text, before = plain_text(current['text']), plain_text(previous['text'])
@@ -30,6 +46,14 @@ def continues_topic(current, previous, *, adjacent=False):
     if (words(text) & words(before)) - filler:
         return True
     gap = current['at']-previous['at']
+    if adjacent and 0 <= gap <= 60:
+        # A concrete action with an unresolved object follows the nearby complaint.
+        if (re.search(r'(?:我|那就).{0,3}(?:直接|干脆|索性).{0,5}(?:给他|给它|把这|改成|做成)', text)
+                and re.search(r'软件|程序|系统|广告|弹窗|接口|启动器|设备|硬件', before)):
+            return True
+        if (re.search(r'反馈|修正|修复|补丁', text)
+                and re.search(r'启动器|软件|程序|接口|更新|补丁', before)):
+            return True
     if adjacent and 30 < gap <= 60 and re.match(r'^可以(?:先|等)', text):
         return True
     if not adjacent or not 0 <= gap <= 30:
@@ -50,7 +74,7 @@ def same_speaker_context(rows, current):
         if current['at']-row['at'] > 90 or row.get('command') or TOPIC_CHANGE.search(plain_text(follow['text'])):
             break
         text = plain_text(row['text'])
-        if SHORT_REACTION.fullmatch(text) or re.fullmatch(r'(?:\[表情[^\]]*\]\s*)+', text):
+        if reaction_only(text):
             if row.get('quote') or mentions(row) or skipped == 2:
                 break
             skipped += 1
@@ -74,7 +98,7 @@ class StyleExample:
 
 def mentions(row):
     # Old cached QQ messages may still contain unparsed Plain mentions.
-    return list(dict.fromkeys([*row.get('mentions', []), *MENTION.findall(row['text'])]))
+    return list(dict.fromkeys([*(row.get('mentions') or []), *MENTION.findall(row['text'])]))
 
 
 def plain_text(text):
@@ -133,15 +157,17 @@ def quote_source(row, rows):
 
 def signals(text):
     scenes = {name for name, pattern in (
-        ('invitation', r'一起|来不来|玩吗|吃饭|打游戏|出去|约|几点|午饭|晚饭'),
+        ('invitation', r'一起|来不来|玩吗|吃饭|打游戏|出去(?:玩|吃|逛|走|吗|不)|约(?:个|一下|吗|不|饭)|几点|午饭|晚饭'),
         ('thanks', r'谢谢|感谢|多谢'),
-        ('help', r'请教|求助|报错|代码|服务器|接口|内存|程序|闪退|崩溃|启动不了'),
+        ('help', r'请教|求助|报错|代码|服务器|接口|内存|程序|闪退|崩溃|启动不了|漏洞|(?i:bug)'),
         ('banter', r'哈哈|笑死|草|绷|蚌|离谱|逆天|乐了|寄了'),
         ('arrangement', r'提交|老师|报告|开会|时间|作业|收到|出发'),
         ('correction', r'不是这个意思|理解错|看错|别插话|没跟你说|没和你说|别.{0,5}(?:阴阳|损我)|(?i:ai).{0,3}味'),
         ('opinion', r'好不好|好看|好玩|怎么样|咋样|喜欢|难看|没意思'),
         ('daily', r'睡醒|起床|睡不着|熬夜|犯困|刚睡|没睡'),
         ('frustration', r'无聊|没招|白忙|又坏|烦死|累死|忘了|破防'),
+        ('complaint', r'广告|弹窗|强制|收费|摇一摇|弱智|恶心|什么破|有病|上限|限额|太贵|好贵|贵死|用不起|付费|会员'),
+        ('confusion', r'咋了|怎么了|怎么回事|咋回事|什么鬼|啥情况'),
     ) if re.search(pattern, text)}
     intents = {name for name, pattern in (
         ('decline', r'不去|不来|不了|没空|算了|拒绝|不打'),
@@ -162,7 +188,7 @@ def words(text):
                          '自己', '感觉', '觉得', '现在', '刚才', '好像', '已经', '还有', '真的', '一点'}
 
 
-def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
+def style_examples(rows, policy, now, current=None, *, excluded=frozenset(), focused=()):
     rows = sorted(rows, key=lambda r: r['at'])
     bot_targets = {'bot', *excluded}
 
@@ -205,6 +231,7 @@ def style_examples(rows, policy, now, current=None, *, excluded=frozenset()):
             continue
         examples.append(StyleExample(row, lead, link if lead else 'single', tuple(before)))
     query = plain_text(current['text']) if current else ''
+    query += ' ' + ' '.join(plain_text(r['text']) for r in focused if not r['self'])
     source, _ = quote_source(current, rows) if current else (None, '')
     if source:
         query += ' '+plain_text(source['text'])

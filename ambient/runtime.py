@@ -12,6 +12,7 @@ from .interjection import Interjections
 from .delivery import send_reply_parts
 from .host import canonical_parts, route_send_tool
 from .learning import plain_text
+from .aliases import alias_cue
 from .policy import Policy, REPLY_FAILURE_NOTICE, SYSTEM_RULES, candidate, normalized, reply_rejection, stable_id
 from .store import Store
 from .transport import Transport
@@ -125,6 +126,7 @@ class Runtime:
                 store = await asyncio.to_thread(Store, self.root/'groups', route.key, policy)
                 rows = await asyncio.to_thread(store.load_raw, now=time.time())
                 self.stores[route.key], self.windows[route.key] = store, Window(policy, rows)
+                self.windows[route.key].identity_snapshot = await asyncio.to_thread(store.snapshot)
                 self.routes[route.key] = route
             p = self.policy(route)
             self.stores[route.key].policy = p
@@ -185,6 +187,11 @@ class Runtime:
                     # gate, without inventing user text or bypassing Persona.
                     event.set_extra('provider_request', request_type(prompt=row['text']))
         if row and await self.record(route, row):
+            if self.owns(route) and alias_cue(row['text']):
+                store, window = await self.ensure(route)
+                await asyncio.to_thread(store.learning.learn, [row], cases=False,
+                                        excluded=window.style_excluded_senders)
+                window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             self.stickers.observe(route, event, row)
             self.interjections.observe(route, event, row, now=time.time())
 
@@ -224,7 +231,10 @@ class Runtime:
         except ValueError:
             if item:
                 status = 'not_saved_storage_full_or_invalid'
+        if alias_cue(row['text']) or (item and item['kind'] == 'address'):
+            await asyncio.to_thread(store.learning.learn, [row], cases=False, excluded=window.style_excluded_senders)
         snap = await asyncio.to_thread(store.snapshot)
+        window.identity_snapshot = snap
         pack = build_pack(window, snap, row, now=time.time(), memory_status=status)
         event.set_extra('ambient_sticker_choices', self.stickers.add_choices(route, pack))
         event.set_extra('ambient_video_choices', self.videos.add_choices(route, pack))
@@ -547,20 +557,23 @@ class Runtime:
                      f"；本群 {snap['used_bytes']//1024}/{snap['quota_bytes']//1024} KiB。"]
             lines.extend(f"{r['kind']} {r['key']}：{r['text']} [{r['id'][:12]}]" for r in facts)
             lines.extend(f"待整理 {r['kind']}：{r['text']} [{r['id'][:12]}]" for r in snap['candidates'])
+            lines.extend(f"称呼 {r['name']}（{ {'candidate':'待确认','rejected':'已停用'}.get(r['kind'],'已确认') }）[{r['id'][:12]}]" for r in snap['aliases'])
             lines.append('记住 类型 键=内容；删除 编号；完成 编号；忘记我。相同类型和键会纠正旧值。')
             return '\n'.join(lines)
         if text == '忘记我':
             await asyncio.to_thread(store.edit, 'forget_member', {}, member=member)
             window.forget(member)
+            window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             return '已删除你在本群的记忆和 Ambient 原话缓存。'
         if text.startswith(('删除 ', '完成 ')):
             operation, prefix = text.split(maxsplit=1)
             snap = await asyncio.to_thread(store.snapshot, member)
-            ids = {r['id'] for r in snap['facts']+snap['summary']+snap['candidates'] if r['id'].startswith(prefix)}
+            ids = {r['id'] for r in snap['facts']+snap['summary']+snap['candidates']+snap['aliases'] if r['id'].startswith(prefix)}
             if len(ids) != 1 or len(prefix) < 8:
                 return '编号不存在或不唯一，请先查看 /轻聊 状态。'
             await asyncio.to_thread(store.edit, 'complete' if operation == '完成' else 'delete',
                                     {'id': ids.pop()}, member=member)
+            window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             return '已清理该条记录及其摘要副本。'
         if text.startswith('记住 '):
             pieces = text.split(maxsplit=2)
@@ -571,6 +584,7 @@ class Runtime:
                 await asyncio.to_thread(store.identify, route.platform, account, name)
                 await asyncio.to_thread(store.edit, 'set', {'kind': kind, 'key': key, 'text': value,
                     'quote': text, 'source': str(event.message_obj.message_id)}, member=member)
+                window.identity_snapshot = await asyncio.to_thread(store.snapshot)
                 return '已保存；再次使用相同类型和键可纠正。'
         return '用法：/轻聊 状态｜记住 偏好 饮料=无糖｜删除 编号｜完成 编号｜忘记我'
 
@@ -580,8 +594,12 @@ class Runtime:
             if now < self.next_maintenance.get(key, 0):
                 continue
             try:
+                if self.owns(self.routes[key]):
+                    await asyncio.to_thread(store.learning.learn, list(self.windows[key].rows), now=now,
+                                            excluded=self.windows[key].style_excluded_senders)
                 await asyncio.to_thread(store.maintain)
                 self.windows[key].trim(now)
+                self.windows[key].identity_snapshot = await asyncio.to_thread(store.snapshot)
             except Exception:
                 self.errors += 1
             self.next_maintenance[key] = now+store.policy.batch_seconds

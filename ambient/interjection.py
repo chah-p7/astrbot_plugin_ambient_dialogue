@@ -11,6 +11,7 @@ from .policy import SYSTEM_RULES, noise, reply_rejection, stable_id
 from .transport import Transport
 from .stickers import STICKER_RULE, parse_sticker
 from .learning import addressing
+from .aliases import name_targets
 from .search import generate, settings_id
 from .videos import VIDEO_RULE, parse_video, share_text
 
@@ -46,6 +47,8 @@ class Interjections:
         state.pending = not (row['command'] or row['self'] or row['attachment'] or row['directed'] or noise(row['text']))
         window = self.runtime.windows.get(route.key)
         targets, _ = addressing(row, list(window.rows) if window else [row])
+        if not targets and window:
+            targets = name_targets(row, window.identity_snapshot)
         if targets and 'bot' not in targets:
             state.pending = False
             state.outcome = 'addressed_to_other_member'

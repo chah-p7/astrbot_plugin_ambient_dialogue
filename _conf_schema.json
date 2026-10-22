@@ -288,6 +288,36 @@
                 "type": "int",
                 "description": "分条发送间隔（毫秒）",
                 "default": 600
+              },
+              "alias_limit": {
+                "type": "int",
+                "description": "每人每类称呼上限（已确认、待确认、停用；1～12）",
+                "default": 5
+              },
+              "alias_days": {
+                "type": "int",
+                "description": "已确认及待确认称呼保留天数（7～365）",
+                "default": 90
+              },
+              "style_archive_limit": {
+                "type": "int",
+                "description": "每群保存的真人接话案例上限（0～200，0 关闭）",
+                "default": 40
+              },
+              "style_archive_days": {
+                "type": "int",
+                "description": "真人接话案例保留天数（1～90）",
+                "default": 30
+              },
+              "style_case_chars": {
+                "type": "int",
+                "description": "每组真人接话案例总字符上限（80～600）",
+                "default": 320
+              },
+              "topic_minutes": {
+                "type": "int",
+                "description": "延后用途回答关联前话的最长分钟数（1～30）",
+                "default": 15
               }
             }
           }
@@ -473,6 +503,36 @@
         "type": "int",
         "description": "分条发送间隔（毫秒）",
         "default": 600
+      },
+      "alias_limit": {
+        "type": "int",
+        "description": "每人每类称呼上限（已确认、待确认、停用；1～12）",
+        "default": 5
+      },
+      "alias_days": {
+        "type": "int",
+        "description": "已确认及待确认称呼保留天数（7～365）",
+        "default": 90
+      },
+      "style_archive_limit": {
+        "type": "int",
+        "description": "每群保存的真人接话案例上限（0～200，0 关闭）",
+        "default": 40
+      },
+      "style_archive_days": {
+        "type": "int",
+        "description": "真人接话案例保留天数（1～90）",
+        "default": 30
+      },
+      "style_case_chars": {
+        "type": "int",
+        "description": "每组真人接话案例总字符上限（80～600）",
+        "default": 320
+      },
+      "topic_minutes": {
+        "type": "int",
+        "description": "延后用途回答关联前话的最长分钟数（1～30）",
+        "default": 15
       }
     }
   }

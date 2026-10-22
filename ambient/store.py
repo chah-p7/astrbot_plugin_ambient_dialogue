@@ -8,6 +8,7 @@ from threading import RLock
 import time
 
 from .policy import Policy, display_name, normalized, stable_id
+from .memory_learning import MemoryLearning
 
 
 PROTECTED = frozenset({'boundary', 'promise', 'todo'})
@@ -28,6 +29,7 @@ class Store:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.path = self.directory / 'state.sqlite3'
         self.lock = RLock()
+        self.learning = MemoryLearning(self)
         with self.connection() as db:
             db.executescript('''
                 PRAGMA journal_mode=DELETE;
@@ -69,6 +71,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS video_shares (
                     bvid TEXT PRIMARY KEY, at REAL NOT NULL, receipt TEXT NOT NULL DEFAULT '');
             ''')
+            self.learning.create(db)
             db.execute('INSERT OR IGNORE INTO meta(id,group_id) VALUES(1,?)', (group,))
             if db.execute('SELECT group_id FROM meta').fetchone()[0] != group:
                 raise ValueError('Ambient群标识不匹配')
@@ -109,6 +112,10 @@ class Store:
             # No per-message growth/history. A daily activity bucket is enough
             # for inactive-profile eviction; nick changes overwrite in place.
             if not old or old['name'] != name or now - old['seen'] >= 86400:
+                if old and old['name'] != name:
+                    if self.learning.record_alias(db, member, old['name'], 'platform', now, 'platform-rename:'+str(now), member):
+                        self.learning.trim(db, now)
+                        db.execute('UPDATE meta SET revision=revision+1 WHERE id=1')
                 db.execute('INSERT INTO members VALUES(?,?,?,?,?) ON CONFLICT(id) '
                            'DO UPDATE SET name=excluded.name,seen=excluded.seen',
                            (member, namespace, account, name, now))
@@ -194,6 +201,7 @@ class Store:
                 db.execute('BEGIN IMMEDIATE')
                 original = db.total_changes
                 self._trim_raw(db, now)
+                self.learning.trim(db, now, compress=compress)
                 if compress:
                     db.execute('DELETE FROM raw_messages')
                 applied = self._apply_batch(db)
@@ -394,6 +402,7 @@ class Store:
             if member is not None:
                 result['summary'] = [r for r in result['summary'] if r['member'] == member]
             result['raw_count'] = db.execute('SELECT COUNT(*) FROM raw_messages').fetchone()[0]
+            result.update(self.learning.snapshot(db, member))
         return {**result, 'used_bytes': self.size(), 'quota_bytes': self.policy.quota_bytes,
                 'paused': self.size() >= self.policy.quota_bytes}
 
@@ -419,6 +428,14 @@ class Store:
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             fact_id = str(values.get('id', ''))
+            alias = db.execute('SELECT * FROM aliases WHERE member=? AND id=?', (member, fact_id)).fetchone()
+            if alias:
+                self.learning.record_alias(db, member, alias['name'], 'rejected', now, 'explicit-delete:'+str(now), member)
+            elif operation != 'forget_member':
+                for table in ('facts', 'candidates'):
+                    address = db.execute('SELECT text FROM '+table+" WHERE member=? AND id=? AND kind='address'", (member, fact_id)).fetchone()
+                    if address:
+                        self.learning.record_alias(db, member, address[0], 'rejected', now, 'explicit-delete:'+str(now), member)
             for table in ('facts', 'candidates', 'interaction_notes'):
                 db.execute('DELETE FROM '+table+' WHERE member=?'+
                     ('' if operation == 'forget_member' else ' AND id=?'),
@@ -426,6 +443,7 @@ class Store:
             self._save_summary(db, [r for r in self._summary(db) if not
                 (r['member'] == member and (operation == 'forget_member' or r['id'] == fact_id))])
             if operation == 'forget_member':
+                self.learning.forget(db, member, now)
                 db.execute('DELETE FROM members WHERE id=?', (member,))
                 # Delete this sender's raw cache too; runtime clears its RAM copy.
                 for row in db.execute('SELECT id,payload FROM raw_messages').fetchall():

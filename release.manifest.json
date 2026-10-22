@@ -18,23 +18,31 @@
     },
     {
       "path": "README.md",
-      "sha256": "984d00e12f124515abc20c10047298b4bff33d7520333941c7431b949173bdd5"
+      "sha256": "086d7046daa6fb4ff5f024d8b2587ec4551cd8c90c3164c97c1aa8dcf689c9a2"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "a9a549000d9a39e0ce9736bf22d46c7cff24d2d33de88532d01a6fc54172fb74"
+      "sha256": "9538296ca5c1fa947e3d880a2ec9ad2bcd337c8bbce4969daf40bd099fea494c"
     },
     {
       "path": "ambient/__init__.py",
       "sha256": "83edcd3b749ba04a5da0917ec6ff7e09c5a158b089e713714a87020713e24a84"
     },
     {
+      "path": "ambient/aliases.py",
+      "sha256": "4b7d9369800cce4b27362e496861f201731413354ad1e39a3b88ed8bd7ad86d4"
+    },
+    {
       "path": "ambient/context.py",
-      "sha256": "42c4c71baf8d2b39c11cc01791e978bbb27bc62e1fa9047735b7c0db2595dc52"
+      "sha256": "2d2afbc31a844286e423478910beddf35011d50e8b51bc6d8719992750b9ee93"
     },
     {
       "path": "ambient/delivery.py",
       "sha256": "f699621a4a5ad664613a3096f4f173625d2fbc71fa68a6a3b20637b3ca3c779d"
+    },
+    {
+      "path": "ambient/examples.py",
+      "sha256": "7f11ae4522d18a59551675d3df754978096ee74f15be0db0eeecb926ed6fca4d"
     },
     {
       "path": "ambient/host.py",
@@ -42,23 +50,27 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "4955c41f81650aad4d657794e5eef0714ae11440538280acd04a0644ebe572bc"
+      "sha256": "32f3dba0dac291733094a0d3abbf8a636a44922624fe4610843e7dbe0008e74c"
     },
     {
       "path": "ambient/learning.py",
-      "sha256": "2b99b5a819c5ae657d20780917523a1b28cf5bd15d7a0edf64aaaef38c448539"
+      "sha256": "4e918973c2dfd18e4912daeb229f2d631cd49cc2c852c0aa55804bf0b3c10211"
+    },
+    {
+      "path": "ambient/memory_learning.py",
+      "sha256": "fe8255a7988602b7671576f8a9a84b181d0f98542caf9aa0240994bbce1a03af"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "f93e1f81cb80a2646e66f8a1122a8ac2b68febae36263056f119287df857bd25"
+      "sha256": "799b71472bf292d810f8935775dfa12981b49e65cd3dfe5716e37cc03fd0cef3"
     },
     {
       "path": "ambient/recall.py",
-      "sha256": "b12f131534eeb294c3c8c7e95bdb12b3ad881dca9cd0a19adb2edc3ebe9de2dc"
+      "sha256": "8934fde5db5efef7730660cebb83faf5cae4b6202874e1c7e608bf89ee54d953"
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "309ce8bba1226a67e9fed34578c6fe2ee8406d801de6b9e2c0a21eef8915c412"
+      "sha256": "880e192d57b8e78d46de97682caad22759e0d851c151a0c7bc40dba55acc5078"
     },
     {
       "path": "ambient/search.py",
@@ -78,7 +90,7 @@
     },
     {
       "path": "ambient/store.py",
-      "sha256": "208bc81d9d6070223383f045d5a53fe6e99ca640f77e7617b8e471306b5450ce"
+      "sha256": "13718f3b984a10469ac7f6ead1e2e6833500d45277f44e2d457330f62bf3f5d1"
     },
     {
       "path": "ambient/transport.py",
@@ -106,7 +118,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "a9491680e1344684b67594d79543d149eeca936091cac53471cfb552902808cf"
+      "sha256": "78669bd122c7cc188eb3c9c1cae9e5c7e443fa7e06feb07a51497828039000c9"
     },
     {
       "path": "pages/stickers/app.js",
@@ -138,7 +150,7 @@
     },
     {
       "path": "tests/test_identity.py",
-      "sha256": "11298fb5832c632cbc3e67b0c596963c23ecd3a6a74819cd17f023f3d7afd476"
+      "sha256": "d95bf91e3ed3effe942e494f6122b095ef37ece8884de7b74fb80cebd3e7bb5d"
     },
     {
       "path": "tests/test_learning.py",
@@ -155,6 +167,10 @@
     {
       "path": "tests/test_search.py",
       "sha256": "8a44ca55c85670fc67d8d958ebb9124996f7760c78ca995f7227c3973d5d5d63"
+    },
+    {
+      "path": "tests/test_social_memory.py",
+      "sha256": "14fcd6a7f05b85ae86cfe971016acf10626b8543a5fe1c684c89f090bffa97fc"
     },
     {
       "path": "tests/test_stickers.py",

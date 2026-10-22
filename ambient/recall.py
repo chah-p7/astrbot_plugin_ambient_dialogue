@@ -5,6 +5,7 @@ import re
 
 from .learning import MEDIA_ONLY, mentions, plain_text, quote_source, words
 from .policy import noise
+from .aliases import known_names
 
 
 REQUEST = re.compile(r'记不记得|还记得|记得.{0,40}[吗?？]|认得我|我是谁|'
@@ -41,10 +42,12 @@ def recall_rows(rows, current, snapshot, *, excluded=()):
             scope = targets
         else:
             # A name can narrow an author search only if it maps unambiguously.
-            named = [m for m in snapshot.get('members', []) if len(m['name']) >= 2 and author_query(re.escape(m['name']))]
-            if len(named) == 1:
-                scope = {named[0]['account']}
-                text = text.replace(named[0]['name'], '')
+            named = [(m, name) for m in snapshot.get('members', []) for name in known_names(snapshot, m)
+                     if len(name) >= 2 and author_query(re.escape(name))]
+            if len({m['account'] for m, _ in named}) == 1:
+                scope = {named[0][0]['account']}
+                for _, name in named:
+                    text = text.replace(name, '')
     query = QUERY_FILLER.sub('', text)
     query = re.sub(r'^[你我他她谁]+|[的吗呢啊呀了?？。]+$', '', query).strip()
     quoted = QUOTED.findall(text)

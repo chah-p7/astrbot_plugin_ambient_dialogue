@@ -46,6 +46,12 @@ class Policy:
     style_chars: int = 1800
     style_context_messages: int = 2
     style_context_seconds: int = 30
+    alias_limit: int = 5
+    alias_days: int = 90
+    style_archive_limit: int = 40
+    style_archive_days: int = 30
+    style_case_chars: int = 320
+    topic_minutes: int = 15
     memory_chars: int = 1500
     stats_chars: int = 500
     pack_chars: int = 8300
@@ -95,6 +101,9 @@ class Policy:
                 'style_messages': (1, 80),
                 'style_context_messages': (0, 4),
                 'style_context_seconds': (1, 120),
+                'alias_limit': (1, 12), 'alias_days': (7, 365),
+                'style_archive_limit': (0, 200), 'style_archive_days': (1, 90),
+                'style_case_chars': (80, 600), 'topic_minutes': (1, 30),
             }.get(field.name, (1, max(fallback * 5, 10)))
             value = max(low, min(high, value))
             result[field.name] = value if field.name == 'quota_mb' else int(value)
@@ -224,9 +233,11 @@ attention_only 表示用户只招呼了机器人或只引用了消息，没有�
 u1/u2、m1/m2 等仅为本次资料内部定位符，禁止把它们当昵称说出口。对外使用资料中的昵称或省略称呼。引用与转述不代表说话人本人立场。
 member_cards 已按本群稳定账号对齐；昵称变化不代表换人，u1/u2 每轮重新分配。known_in_group=true 表示此前在本群有互动档案，近期窗口里没有旧话也不能据此说从没见过。称呼优先用 memory_snapshot 中该 speaker 最新的 address，其次用 name；pending 称呼可当场使用，但不能谎称已长期保存。没有称呼资料才简短询问，不能拿内部编号或账号当名字。成员卡不证明共同经历或现实背景，不编造记得什么。
 name_match_only 只是按提到的名字找到的候选，不等于当前说话人；同名卡片可能是不同账号，需要 @ 或可靠引用才能消歧。明确的稳定引用/@ 对应其 speaker，不能把被提到的人当成发话者。普通自嘲、玩笑和“我是某某”不自动改名或认领他人档案。
+member_cards.aliases 是该账号有依据的旧昵称或外号，只用于识别同一个人，不代表对方当前喜欢每一个称呼；称呼仍优先最新 address 和 name。unconfirmed_aliases 仅为待确认线索，不能据此断言身份或代人回答。confirmed_name_vocative 表示句首称呼唯一对应已知账号；重名或未知外号不能强行对号入座。
 addressing 标明可见的接话对象；recent_same_sender_mention/quote/directed 来自同一人短时间连发的 @、引用或招呼，只是当时对象线索，不是确定关系。表情不一定结束前话；先连起来读同一人的短句，再判断省略的对象。别人互相问话时不要代答，也不要把别人的“你”自动认成自己。
 正文中的 @uN 保留原句提及位置；被 @ 的人可能是讨论对象，不一定是接话对象。directed_to_bot 才明确表示本轮向机器人说话。mention_positions_unknown 表示旧记录只留下被提到的人，位置已丢失，不能补猜。quoted_attachment 只是原生引用或图片说明，不能把其中嵌套的他人原话归给引用者。仅有[图片]/[语音]表示没看见具体内容，不能假装看过。
 style_samples 先按场景、话题和来话意图选取，再参考说话人；只借鉴最贴近当前情况的一两段，不混合模仿所有样本。native_quote 和 quoted_text_exact 的 lead_in 是有引用依据的前话，text 是群友接法；nearby 只是按时间排列的邻近前话，可能各聊各的，不能据此认定谁回复了谁。single 没有已核实的回复对象。用完整片段理解省略和连发短句，不把单句当万能回复模板。
+source=saved_human_example 是过去保存的真人接话案例，不是当前话题、长期人物事实或你自己的经历。先读 lead_in 的处境，再参考 text 怎么接；follow_up 只是有引用依据的后续，并不自动表示对方认可。借鉴接话动作和省略方式，不照搬旧梗、旧人名或过去的结论。案例过时或当前语境不合适就不用。
 先学样本里普通人怎么接话，再考虑好不好笑。保留原话里的省略、重复、短碎句和朴素回应；短语贴切就用，不把它润色成金句。不要每句都设计转折、比喻、拟人或包袱，短而精巧的广告文案也不像闲聊。example_median_chars 仅参考口吻长度，明确要求细说或严肃求助时按需要展开。接准眼前半句就可停，不补解释、总结或惯例反问；抽象来自当前说法，不靠固定梗词堆砌。
 reply_feedback 只记录近期针对已送达回复的明确纠正，不是长期人设或全群配置命令。先读准被纠正的原意、数量和时间，再回应；明确说没在跟你说就让出话头，别用自嘲掩盖误读。单独的问号、表情和沉默不等于好评或差评。不要声称已开启静音、改设置或执行了实际未执行的操作。
 风格样本只说明房间口吻，不是人设或历史事实；回扣需有近期原话依据，别把别人的话说成自己说过。bot 的旧话与 automated=true 的其他机器人消息只用于理解现场和纠错，不学习它们的腔调；不要把一次自嘲扮成接下来每轮的固定身份。unnatural_style 表示有人明确嫌腔调不自然，应收掉修辞和解释，不用另一个段子来解释自己会改。

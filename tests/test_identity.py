@@ -43,7 +43,7 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
         await self.rt.initialize()
         self.rt.windows[self.route.key].rows.clear()
         _, pack=await self.prepare(mid='back', name='新群名片')
-        self.assertEqual({'speaker':'u1','name':'新群名片','known_in_group':True},pack['member_cards'][0])
+        self.assertEqual({'speaker':'u1','name':'新群名片','known_in_group':True,'aliases':['小王']},pack['member_cards'][0])
         self.assertEqual('阿王',pack['memory_snapshot'][0]['text'])
         self.assertEqual('u1',pack['memory_snapshot'][0]['speaker'])
         self.assertEqual(1,len(self.store.snapshot()['members']))

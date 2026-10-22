@@ -11,8 +11,10 @@ import time
 from .policy import display_name, normalized, stable_id
 from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_topic,
                        mentions as message_mentions, plain_text, quote_source,
-                       reply_feedback, same_speaker_context, style_examples)
+                       reaction_only, reply_feedback, same_speaker_context, short_answer, style_examples)
 from .recall import recall_rows
+from .aliases import known_names, name_key, name_targets
+from .examples import select_cases
 
 
 def compact(value):
@@ -41,11 +43,10 @@ def participants(snapshot, people, current, focused=()):
     for r in people:
         if not r['self'] and not names.get(r['member']):
             names[r['member']] = display_name(r.get('name', ''), r['sender'])
+    for alias in snapshot.get('aliases', []):
+        if alias['kind'] == 'rejected' and name_key(names.get(alias['member'], '')) == alias['key']:
+            names[alias['member']] = ''
 
-    addresses = {}
-    for r in sorted(snapshot.get('facts', []) + snapshot.get('candidates', []), key=lambda r: r['at']):
-        if r['kind'] == 'address' and not r.get('expires'):
-            addresses[r['member']] = r['text']
     by_account = {r['account']: member for member, r in members.items()}
     by_account.update({r['sender']: r['member'] for r in people if not r['self']})
     priority = [current['member']] if current and not current['self'] else []
@@ -62,12 +63,16 @@ def participants(snapshot, people, current, focused=()):
                 aliases.setdefault(member, 'u'+str(len(aliases)+1))
                 accounts[account] = aliases[member]
             (priority if row is current else referenced).append(member)
-    named = set()
+    named, tentative = set(), {}
     question = plain_text(current['text']) if current else ''
     for member in members:
-        for name in (names.get(member, ''), addresses.get(member, '')):
+        accepted = known_names(snapshot, {**members[member], 'name': names.get(member, '')})
+        pending = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member and a['kind'] == 'candidate']
+        for name in [*accepted, *pending]:
             if 2 <= len(name) <= 40 and re.search(r'(?<![A-Za-z0-9_])'+re.escape(name)+r'(?![A-Za-z0-9_])', question, re.I):
                 named.add(member)
+                if name not in accepted:
+                    tentative.setdefault(member, []).append(name)
                 aliases.setdefault(member, 'u'+str(len(aliases)+1))
                 accounts[members[member]['account']] = aliases[member]
                 priority.append(member)
@@ -83,6 +88,12 @@ def participants(snapshot, people, current, focused=()):
             card['known_in_group'] = current.get('known_before', card['known_in_group'])
         if member in named and (not current or member != current['member']):
             card['name_match_only'] = True
+        accepted = [a['name'] for a in snapshot.get('aliases', []) if a['member'] == member
+                    and a['kind'] not in {'candidate', 'rejected'} and a['name'] != card['name']]
+        if accepted:
+            card['aliases'] = list(dict.fromkeys(accepted))
+        if member in tentative:
+            card['unconfirmed_aliases'] = tentative[member]
         cards.append(card)
     return aliases, accounts, names, cards
 
@@ -188,6 +199,7 @@ class Window:
         self.policy = policy
         self.style_excluded_senders = frozenset(style_excluded_senders)
         self.rows = deque(sorted(rows, key=lambda r: r['at']), maxlen=policy.raw_limit)
+        self.identity_snapshot = {}
 
     def add(self, row, now):
         self.trim(now)
@@ -209,7 +221,7 @@ class Window:
 RECALL_REPLY = re.compile(r'你(?:刚才|之前|前面|上句)(?:是)?(?:说|讲|问)|(?:刚才|之前|前面)你(?:说|讲|问)|再说一遍')
 
 
-def focus_rows(rows, current):
+def focus_rows(rows, current, *, topic_seconds=900):
     """Pin verified quotes and supported continuations, never identity alone."""
     if not current:
         return []
@@ -235,18 +247,26 @@ def focus_rows(rows, current):
         # Only a confirmed reply to this account, never the room's last bot line.
         previous = next((r for r in reversed(rows) if r['self'] and not r.get('attachment')
                          and (r.get('quote') or {}).get('sender') == current['sender']
-                         and 0 <= current['at']-r['at'] <= 180), None)
+                         and 0 <= current['at']-r['at'] <= max(180, topic_seconds)), None)
         anchor, _ = quote_source(previous, rows) if previous else (None, '')
         # A vague "why" can follow the last room message, but cannot jump over
         # intervening conversations to an old bot response to the same account.
-        last = next((r for r in reversed(rows) if r['id'] != current['id'] and not r.get('command')), None)
+        last = next((r for r in reversed(rows) if r['id'] != current['id'] and not r.get('command')
+                     and not reaction_only(r['text'])), None)
         changed = previous and any(r['sender'] == current['sender'] and previous['at'] < r['at'] <= current['at']
                                    and TOPIC_CHANGE.search(plain_text(r['text'])) for r in rows)
         topic_rows = [current] + [r for r, _ in selected]
-        related = previous and not changed and (
+        answered = previous and any(
+            0 <= r['at']-previous['at'] <= topic_seconds and not message_mentions(r)
+            and short_answer(previous['text'], r['text'])
+            and next((s for s in reversed(rows) if s['at'] < r['at'] and not s.get('command')
+                      and not reaction_only(s['text'])), None) is previous
+            for r in topic_rows if not r['self'])
+        related = previous and not changed and (current['at']-previous['at'] <= 180 and (
             RECALL_REPLY.search(plain_text(current['text']))
             or continues_topic(current, previous, adjacent=last is previous)
             or (anchor and any(continues_topic(r, anchor) for r in topic_rows)))
+            or answered)
         if related and previous['id'] not in seen:
             seen.add(previous['id'])
             selected.append((previous, 'last_reply_to_speaker'))
@@ -266,10 +286,13 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     rows = [r for r in window.rows if r['at'] <= min(now, current['at'] if current else now)]
     if current and any(r['id'] == current['id'] for r in rows):
         rows = rows[:next(i for i, r in enumerate(rows) if r['id'] == current['id'])+1]
-    focused = focus_rows(rows, current)
+    focused = focus_rows(rows, current, topic_seconds=p.topic_minutes*60)
     recalled, lookup = recall_rows(rows, current, snapshot, excluded=window.style_excluded_senders)
+    saved_examples = select_cases(snapshot.get('style_cases', []), rows, current, p, now,
+                                  focused=[r for r, _ in focused], excluded=window.style_excluded_senders)
     people = [current] if current else []
     people.extend(reversed(rows))
+    people.extend(r for case in saved_examples for r in case['rows'])
     aliases, accounts, names, cards = participants(snapshot, people, current,
                                                   [r for r, _ in focused + recalled])
     ids = {r['id']: 'm'+str(i+1) for i, r in enumerate(rows)}
@@ -302,6 +325,9 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                 result['mention_positions_unknown'] = True
         if not r['self']:
             targets, basis = addressing(r, rows)
+            if not targets:
+                targets = name_targets(r, snapshot)
+                basis = 'confirmed_name_vocative'
             if targets:
                 result['addressing'] = {'targets': [accounts.get(a, 'bot' if a == 'bot' else 'outside_window') for a in targets],
                                         'basis': basis}
@@ -314,7 +340,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         return {'ref': ids[row['id']], 'speaker': aliases[row['member']],
                 'text': model_text(row['text'], accounts), 'seconds_ago': max(0, int(now-row['at']))}
 
-    for example in style_examples(rows, p, now, current, excluded=window.style_excluded_senders):
+    for example in style_examples(rows, p, now, current, excluded=window.style_excluded_senders,
+                                  focused=[r for r, _ in focused]):
         # Keep source anchors and whole messages; use the budget for real speech
         # instead of duplicating names, timestamps and addressing on every sample.
         sample = style_line(example.row)
@@ -324,6 +351,16 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
         if example.context:
             sample['nearby'] = [style_line(r) for r in example.context]
         style.append(sample)
+    for i, case in enumerate(saved_examples):
+        def case_line(row, position):
+            return {'ref': f's{i+1}.{position}', 'speaker': aliases[row['member']],
+                    'text': model_text(row['text'], accounts), 'seconds_ago': max(0, int(now-row['at']))}
+        sample = {**case_line(case['rows'][1], 2), 'link': case['link'], 'source': 'saved_human_example',
+                  'lead_in': case_line(case['rows'][0], 1)}
+        if len(case['rows']) > 2:
+            sample['follow_up'] = case_line(case['rows'][2], 3)
+        style.insert(i, sample)
+    style = style[:p.style_messages]
     feedback = [{'reply': render(reply), 'reaction': render(reaction), 'kind': kind}
                 for reply, reaction, kind in reply_feedback(rows, p, now, excluded=window.style_excluded_senders)]
 
