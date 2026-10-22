@@ -29,6 +29,8 @@ schema = {'groups': {'type':'template_list', 'description':'启用的群', 'defa
         'interject_enabled': {'type':'bool','description':'自然插话','default':False},
         'video_sharing_enabled': {'type':'bool','description':'分享 B 站视频到本群','default':False,
             'hint':'从公开视频列表选材，由当前回复或插话决定是否分享短配文＋原链接；不登录 B 站、不在评论区发消息。'},
+        'video_card_enabled': {'type':'bool','description':'QQ 官方视频大图卡片（配文分开发送）','default':False,
+            'hint':'需 QQ 平台 ARK 权限及 B 站链接、封面域名许可。仅 QQ 官方适配器生效；失败或回执不明不自动补发。'},
         'video_topics': {'type':'list','description':'视频选材关键词（标题、简介、分区；空列表不限）',
             'default':['搞笑','鬼畜','抽象','整活','游戏','动画','动物']},
         'video_max_seconds': {'type':'int','description':'候选视频最长秒数','default':300},

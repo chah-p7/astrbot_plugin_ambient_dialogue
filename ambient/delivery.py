@@ -62,7 +62,7 @@ def split_reply(text, target=80):
     return parts
 
 
-async def send_reply_parts(transport, text, policy, before_send, confirmed, *, max_parts=None, sticker=None):
+async def send_reply_parts(transport, text, policy, before_send, confirmed, *, max_parts=None, sticker=None, card=None):
     """Caller owns the group lock and a durable claim for the entire draft.
 
     Every part repeats the caller's freshness/config checks at the HTTP boundary.
@@ -70,6 +70,11 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
     """
     parts = split_reply(text, policy.reply_segment_chars)
     if max_parts is not None and max_parts < 1:
+        raise ValueError('qq_reply_slots_exhausted')
+    if card and sticker:
+        raise ValueError('conflicting_attachments')
+    if card and parts and max_parts == 1:
+        # Do not leave a caption without its video or combine them in one bubble.
         raise ValueError('qq_reply_slots_exhausted')
     media = None
     # Text and image always have separate receipts/bubbles. When only one
@@ -83,21 +88,21 @@ async def send_reply_parts(transport, text, policy, before_send, confirmed, *, m
             if not parts:
                 raise
     if max_parts is not None:
-        text_slots = max_parts - bool(media)
+        text_slots = max_parts - bool(media or card)
         if len(parts) > text_slots:
             # Preserve the rest of the answer when QQ's native per-anchor
             # allowance is smaller than the number of natural paragraphs.
             parts = parts[:text_slots-1] + ['\n\n'.join(parts[text_slots-1:])]
-    messages = [(part, None) for part in parts]
+    messages = [(part, {}) for part in parts]
     if media:
-        messages.append(('', media))
+        messages.append(('[表情包：'+sticker['caption']+']', {'media': media}))
+    if card:
+        messages.append((card['text'], {'ark': card['ark']}))
     receipts = []
-    for index, (part, image) in enumerate(messages):
+    for index, (part, attachment) in enumerate(messages):
         if index and policy.reply_segment_interval_ms:
             await asyncio.sleep(policy.reply_segment_interval_ms / 1000)
-        receipt = await asyncio.wait_for(transport.send(part, before_send, media=image)
-                                        if image else transport.send(part, before_send), 20)
-        recorded = '[表情包：'+sticker['caption']+']' if image else part
-        await confirmed(recorded.strip(), receipt)
+        receipt = await asyncio.wait_for(transport.send('' if attachment else part, before_send, **attachment), 20)
+        await confirmed(part.strip(), receipt)
         receipts.append(receipt)
     return receipts

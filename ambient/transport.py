@@ -6,6 +6,7 @@ import base64
 from functools import lru_cache
 import hashlib
 import inspect
+import logging
 import time
 from types import SimpleNamespace
 
@@ -98,8 +99,10 @@ class Transport:
             return await upload_qq_image(self.platform, self.route.group, png, self.check)
         return {'type': 'image', 'data': {'file': 'base64://'+base64.b64encode(png).decode()}}
 
-    async def send(self, text, before_send, *, media=None):
+    async def send(self, text, before_send, *, media=None, ark=None):
         self.check()
+        if ark is not None and (self.route.adapter != 'qq_official' or text or media):
+            raise ValueError('qq_card_requires_separate_message')
         if self.route.adapter == 'aiocqhttp':
             from aiocqhttp import CQHttp
             client = self.platform.get_client()
@@ -139,6 +142,16 @@ class Transport:
                     headers=client.http._headers, timeout=ClientTimeout(total=15),
                     allow_redirects=False, **kwargs) as response:
                 if response.status != 200:
+                    if ark is not None:
+                        try:
+                            body = await response.json()
+                            code = body.get('code') if isinstance(body, dict) else None
+                        except (ValueError, TypeError):
+                            code = None
+                        code = code if type(code) is int else None
+                        logging.getLogger('astrbot').warning('Ambient QQ ARK rejected: http=%s code=%s', response.status, code)
+                        if code == 40034126:
+                            raise ValueError('qq_ark_template_permission_required')
                     raise ValueError('qq_receipt_unconfirmed')
                 data = await response.json()
                 if not isinstance(data, dict) or any(k in data for k in ('code', 'retcode', 'error')) or not native_id(data.get('id')):
@@ -146,7 +159,7 @@ class Transport:
                 return data
 
         data = await BotAPI(SimpleNamespace(request=request)).post_group_message(
-            group_openid=self.route.group, content=text, msg_type=7 if media else 0, msg_id=self.anchor,
-            **({'media': media} if media else {}),
+            group_openid=self.route.group, content=text, msg_type=3 if ark is not None else 7 if media else 0, msg_id=self.anchor,
+            **({'ark': ark} if ark is not None else {'media': media} if media else {}),
             msg_seq=10001+int(stable_id(self.route.key, self.anchor, text)[:8], 16) % 2147470000)
         return data['id']

@@ -9,7 +9,7 @@ import test_unified as unified
 from ambient.context import compact, route_for
 from ambient.policy import normalized
 from ambient.store import Store
-from ambient.videos import BVID, VIDEO_RULE, parse_video, video_row
+from ambient.videos import BVID, VIDEO_RULE, big_image_card, parse_video, video_row
 
 
 FIRST, SECOND = 'BV1234567890', 'BVabcdefghij'
@@ -17,12 +17,30 @@ FIRST, SECOND = 'BV1234567890', 'BVabcdefghij'
 
 def raw_video(identity=FIRST, title='企鹅跳舞，离谱游戏实况'):
     return {'bvid': identity, 'title': title, 'desc': '企鹅跳舞，游戏整活片段。',
+            'pic': 'http://i0.hdslb.com/bfs/archive/0123456789.jpg',
             'owner': {'name': '作者'}, 'tname': '搞笑', 'duration': 60,
             'pubdate': int(time.time())-60, 'state': 0,
             'redirect_url': 'https://untrusted.invalid/not-a-video'}
 
 
 class VideoDataTests(unittest.TestCase):
+    def test_card_uses_fixed_template_canonical_link_and_only_bilibili_cover(self):
+        row = video_row(raw_video())
+        card = big_image_card(row)
+        values = {r['key']: r['value'] for r in card['ark']['kv']}
+        self.assertEqual(37, card['ark']['template_id'])
+        self.assertEqual('https://www.bilibili.com/video/'+FIRST+'/', values['#METAURL#'])
+        self.assertEqual('https://i0.hdslb.com/bfs/archive/0123456789.jpg', values['#METACOVER#'])
+        self.assertEqual('哔哩哔哩 · 作者', values['#METASUBTITLE#'])
+        self.assertIn(FIRST, card['text'])
+        for bad in ('https://i0.hdslb.com.evil.test/bfs/a.jpg', 'https://127.0.0.1/a.jpg',
+                    'https://user@i0.hdslb.com/bfs/a.jpg', 'https://i0.hdslb.com/bfs/../a.jpg',
+                    'https://i0.hdslb.com/bfs/a.jpg?redirect=secret', 'file:///secret', ''):
+            value = video_row({**raw_video(), 'pic': bad})
+            self.assertEqual('', value['cover'])
+            with self.assertRaisesRegex(ValueError, 'video_cover_unavailable'):
+                big_image_card(value)
+
     def test_only_offered_ids_become_links_and_source_urls_are_discarded(self):
         raw = raw_video()
         row = video_row(raw)
@@ -173,6 +191,99 @@ class VideoFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.interject(Event('发个搞笑视频'), '我上学的时候就看过 [[bilibili:'+FIRST+']]')
         self.assertEqual([], self.sent)
         self.api.assert_not_awaited()
+
+
+class VideoCardFlowTests(unittest.IsolatedAsyncioTestCase):
+    asyncTearDown = unified.UnifiedTests.asyncTearDown
+    answer = unified.UnifiedTests.answer
+    interject = unified.UnifiedTests.interject
+
+    async def asyncSetUp(self):
+        await VideoFlowTests.asyncSetUp(self)
+        self.config['groups'][0]['video_card_enabled'] = True
+        self.wires = []
+        owner = self
+        class Sender:
+            def __init__(self, *args): pass
+            def check(self): pass
+            async def send(self, text, guard, *, ark=None):
+                if owner.late_change:
+                    owner.late_change()
+                await guard()
+                owner.sent.append(text)
+                owner.wires.append({'text': text, 'ark': ark})
+                if owner.error:
+                    raise owner.error
+                return 'receipt-'+str(len(owner.wires))
+        for module in ('runtime', 'interjection'):
+            item = patch('ambient.'+module+'.Transport', Sender)
+            self.patches.append(item)
+            item.start()
+
+    async def test_both_paths_send_caption_then_card_and_share_confirmed_context(self):
+        await self.answer(unified.directed('发个搞笑视频', 'normal-card'), '企鹅上班了 [[bilibili:'+FIRST+']]')
+        await self.interject(Event('换个搞笑的看看', mid='auto-card'), '猫也上班了 [[bilibili:'+SECOND+']]')
+        self.assertEqual(['企鹅上班了', '', '猫也上班了', ''], self.sent)
+        self.assertEqual([None, 37, None, 37], [w['ark']['template_id'] if w['ark'] else None for w in self.wires])
+        pack = json.loads(self.ctx.llm_generate.call_args.kwargs['prompt'])['ambient_data']
+        self.assertIn(FIRST, compact(pack['recent_context']+pack['focus_context']))
+        self.assertNotIn('hdslb.com', compact(pack))
+        rows = [r for r in self.rt.windows[self.route.key].rows if r['self']]
+        self.assertEqual(['reply', 'reply', 'interjection', 'interjection'], [r['source'] for r in rows])
+        self.assertEqual(big_image_card(self.rt.videos.candidates[FIRST])['text'].replace('\n', ' '), rows[1]['text'])
+        with self.rt.stores[self.route.key].connection() as db:
+            self.assertEqual(2, db.execute("SELECT count(*) FROM video_shares WHERE receipt<>''").fetchone()[0])
+
+    async def test_card_failure_keeps_caption_without_video_receipt_or_retry(self):
+        self.late_change = lambda: setattr(self, 'error', TimeoutError() if self.sent else None)
+        event = unified.directed('发个搞笑视频', 'failed-card')
+        await self.answer(event, '企鹅上班了 [[bilibili:'+FIRST+']]')
+        self.assertEqual(['企鹅上班了', ''], self.sent)
+        self.assertEqual('partial_no_retry', self.rt.replies[self.route.key]['outcome'])
+        self.assertEqual(['企鹅上班了'], [r['text'] for r in self.rt.windows[self.route.key].rows if r['self']])
+        store = self.rt.stores[self.route.key]
+        reopened = Store(store.directory.parent, self.route.key, store.policy)
+        with reopened.connection() as db:
+            self.assertEqual('', db.execute('SELECT receipt FROM video_shares WHERE bvid=?', (FIRST,)).fetchone()[0])
+        self.assertIn(FIRST, reopened.video_history())
+
+    async def test_interjection_preempted_after_caption_does_not_send_old_card(self):
+        def change():
+            if self.sent:
+                self.rt.interjections.states[self.route.key].generation += 1
+        self.late_change = change
+        await self.interject(Event('看看搞笑的', mid='preempt-card'), '企鹅上班了 [[bilibili:'+FIRST+']]')
+        self.assertEqual(['企鹅上班了'], self.sent)
+        self.assertEqual(1, len([r for r in self.rt.windows[self.route.key].rows if r['self']]))
+
+    async def test_card_reserves_slot_and_exhausted_anchor_sends_no_orphan_caption(self):
+        store = self.rt.stores[self.route.key]
+        for _ in range(4): store.claim_qq_part('exhausted')
+        await self.answer(unified.directed('发个视频', 'exhausted'), '企鹅上班了 [[bilibili:'+FIRST+']]')
+        self.assertEqual([], self.sent)
+        self.assertEqual('qq_reply_slots_exhausted', self.rt.replies[self.route.key]['outcome'])
+        self.assertEqual(set(), store.video_history())
+        for _ in range(3): store.claim_qq_part('two-slots')
+        await self.answer(unified.directed('发个视频', 'two-slots'), '前半句。\n\n后半句。 [[bilibili:'+FIRST+']]')
+        self.assertEqual(['前半句。\n\n后半句。', ''], self.sent)
+        self.assertEqual(0, store.remaining_qq_parts('two-slots'))
+
+    async def test_config_change_after_caption_stops_card(self):
+        def change():
+            if self.sent: self.config['groups'][0]['video_card_enabled'] = False
+        self.late_change = change
+        await self.answer(unified.directed('发个视频'), '企鹅上班了 [[bilibili:'+FIRST+']]')
+        self.assertEqual(['企鹅上班了'], self.sent)
+
+    async def test_no_cover_not_offered_and_onebot_retains_link_mode(self):
+        from dataclasses import replace
+        self.rt.videos.candidates[FIRST]['cover'] = ''
+        pack = {}
+        offered = self.rt.videos.add_choices(self.route, pack)
+        self.assertNotIn(FIRST, offered)
+        self.assertIn(SECOND, offered)
+        self.assertNotIn('cover', pack['video_candidates'][0])
+        self.assertIsNone(self.rt.videos.card(replace(self.route, adapter='aiocqhttp'), offered[SECOND]))
 
 
 if __name__ == '__main__':

@@ -173,9 +173,12 @@ class Interjections:
             if rejection or len(text) > p.interject_max_chars or text.startswith('/'):
                 state.outcome = rejection or 'invalid_draft'
                 return
+            card = None
             if video:
                 await rt.videos.verify(video)
-                text = share_text(text, video)
+                card = rt.videos.card(route, video)
+                if not card:
+                    text = share_text(text, video)
 
             claimed = False
             own_receipts = set()
@@ -210,7 +213,7 @@ class Interjections:
             state.outcome = 'preparing_send'
             async with rt.send_locks.setdefault(route.key, asyncio.Lock()):
                 await send_reply_parts(transport, text, p, before_send, record_part,
-                    sticker=sticker,
+                    sticker=sticker, card=card,
                     max_parts=store.remaining_qq_parts(current['id']) if route.adapter == 'qq_official' else None)
             state.outcome = 'confirmed'
             rt.delivery_audit(route, current, 'interjection', confirmed_parts)

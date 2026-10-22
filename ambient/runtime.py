@@ -30,7 +30,7 @@ repair_context_expired_or_changed repair_provider_changed search_context_changed
 qq_native_contract_unavailable qq_reply_anchor_unavailable qq_client_changed
 qq_receipt_unconfirmed qq_reply_slots_exhausted onebot_native_client_unavailable onebot_account_mismatch
 onebot_receipt_unconfirmed video_source_unavailable video_source_changed video_already_shared
-video_no_longer_available'''.split())
+video_no_longer_available video_cover_unavailable qq_ark_template_permission_required'''.split())
 
 
 def error_code(exc):
@@ -312,6 +312,7 @@ class Runtime:
                 plain = all(type(p).__name__ in {'Plain', 'Reply', 'At'} for p in chain.chain)
                 sticker = None
                 video = None
+                card = None
                 attempted = False
                 claimed = False
                 confirmed_parts = 0
@@ -361,7 +362,9 @@ class Runtime:
                                                          event.get_extra('ambient_video_choices') or {})
                             if video:
                                 await self.videos.verify(video)
-                                text = share_text(text, video)
+                                card = self.videos.card(route, video)
+                                if not card:
+                                    text = share_text(text, video)
                                 sticker = None
                         else:
                             text, _ = parse_sticker(text, [])
@@ -370,7 +373,7 @@ class Runtime:
                             return
                         receipts = await send_reply_parts(Transport(self.context, event, route), text,
                             self.policy(route), guard, record_part,
-                            sticker=sticker,
+                            sticker=sticker, card=card,
                             max_parts=store.remaining_qq_parts(row['id']) if route.adapter == 'qq_official' else None)
                         delivered = {'id': receipts[-1]}
                         if len(receipts) > 1:
@@ -392,6 +395,7 @@ class Runtime:
                     if attempted:
                         event.set_extra('ambient_reply_blocked', outcome)
                     self.reply_status(route, outcome)['uncertain' if attempted else 'blocked'] += 1
+                    self.replies[route.key]['last_error'] = error_code(exc)
                     self.audit(route, row, 'uncertain' if attempted else 'blocked', outcome)
                 finally:
                     if confirmed_parts:
@@ -632,6 +636,7 @@ class Runtime:
                 'vision': {stable_id(k)[:12]: v for k, v in self.vision.statuses.items()},
                 'groups': {key: {'raw_in_memory': len(self.windows[key].rows),
                     'vision_enabled': self.windows[key].vision_enabled,
+                    'video_card_enabled': self.videos.cards_enabled(self.routes[key]),
                     'used_bytes': self.stores[key].size(),
                     'reply': self.replies.get(key, {}),
                     'interjection': {k: getattr(self.interjections.states.get(key), k, 0)

@@ -24,6 +24,72 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_official_big_card_has_separate_bubble_receipt_and_sequence(self):
+        from ambient.delivery import send_reply_parts
+        from ambient.policy import Policy
+        from ambient.videos import big_image_card, video_row
+        from test_videos import raw_video
+        card = big_image_card(video_row(raw_video()))
+        self.response = lambda: {'id': 'receipt-'+str(len(self.calls))}
+        gate = AsyncMock(side_effect=[10001, 10002, 10003])
+        confirmed = AsyncMock()
+        result = await send_reply_parts(Transport(self.ctx, self.event, self.route),
+            '第一句。\n\n第二句。\n\n第三句。', Policy(reply_segment_interval_ms=0), gate, confirmed,
+            max_parts=3, card=card)
+        wire = [c['json'] for c in self.calls]
+        self.assertEqual([0, 0, 3], [m['msg_type'] for m in wire])
+        self.assertEqual(['第一句。', '第二句。\n\n第三句。', ''], [m['content'] for m in wire])
+        self.assertEqual([10001, 10002, 10003], [m['msg_seq'] for m in wire])
+        self.assertTrue(all(m['msg_id']=='m1' and not m['media'] for m in wire))
+        self.assertTrue(all(not m['ark'] for m in wire[:2]))
+        self.assertEqual(card['ark'], wire[-1]['ark'])
+        self.assertEqual(['receipt-1', 'receipt-2', 'receipt-3'], result)
+        self.assertEqual(card['text'], confirmed.await_args_list[-1].args[0])
+        self.assertTrue(all(not c['allow_redirects'] for c in self.calls))
+
+    async def test_card_permission_error_or_timeout_has_no_fallback_or_false_receipt(self):
+        from ambient.delivery import send_reply_parts
+        from ambient.policy import Policy
+        from ambient.videos import big_image_card, video_row
+        from test_videos import raw_video
+        card = big_image_card(video_row(raw_video()))
+        for timeout in (False, True):
+            self.calls.clear()
+            self.status = 200
+            self.failure = None
+            self.response = lambda: {'id': 'caption'} if len(self.calls)==1 else {'code': 40034126, 'message': 'private error'}
+            async def record(text, receipt):
+                if timeout: self.failure = TimeoutError()
+                else: self.status = 400
+            confirmed = AsyncMock(side_effect=record)
+            with self.assertRaises((ValueError, TimeoutError)):
+                await send_reply_parts(Transport(self.ctx, self.event, self.route), '配文',
+                    Policy(reply_segment_interval_ms=0), AsyncMock(side_effect=[10001,10002]),
+                    confirmed, max_parts=3, card=card)
+            self.assertEqual(2, len(self.calls))
+            confirmed.assert_awaited_once_with('配文', 'caption')
+
+    async def test_card_permission_rejection_exposes_safe_actionable_error(self):
+        from ambient.videos import big_image_card, video_row
+        from test_videos import raw_video
+        self.status, self.response = 400, {'code': 40034126, 'message': 'private response'}
+        with self.assertRaisesRegex(ValueError, '^qq_ark_template_permission_required$'):
+            await Transport(self.ctx, self.event, self.route).send('', AsyncMock(return_value=10001),
+                ark=big_image_card(video_row(raw_video()))['ark'])
+        self.assertEqual(1, len(self.calls))
+
+    async def test_card_cannot_mix_text_or_image_in_same_native_request(self):
+        from ambient.videos import big_image_card, video_row
+        from test_videos import raw_video
+        ark = big_image_card(video_row(raw_video()))['ark']
+        gate = AsyncMock()
+        sender = Transport(self.ctx, self.event, self.route)
+        for text, media in (('配文', None), ('', {'file_info': 'image'})):
+            with self.assertRaisesRegex(ValueError, 'qq_card_requires_separate_message'):
+                await sender.send(text, gate, ark=ark, media=media)
+        self.assertEqual([], self.calls)
+        gate.assert_not_awaited()
+
     async def test_native_sticker_upload_does_not_send_or_consume_sequence(self):
         from ambient.transport import upload_qq_image
         self.response = {'file_info': 'native-file', 'file_uuid': 'upload-id', 'ttl': 600}
