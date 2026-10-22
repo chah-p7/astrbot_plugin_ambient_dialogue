@@ -318,6 +318,26 @@
                 "type": "int",
                 "description": "延后用途回答关联前话的最长分钟数（1～30）",
                 "default": 15
+              },
+              "alias_context_messages": {
+                "type": "int",
+                "description": "外号学习每批消息条数",
+                "default": 48
+              },
+              "alias_context_chars": {
+                "type": "int",
+                "description": "外号学习每批文字预算",
+                "default": 8000
+              },
+              "alias_context_timeout_seconds": {
+                "type": "int",
+                "description": "后台外号学习超时（秒）",
+                "default": 120
+              },
+              "alias_context_reviews": {
+                "type": "int",
+                "description": "每轮额外外号复核次数（0～6，不限制群聊回复）",
+                "default": 2
               }
             }
           },
@@ -331,7 +351,7 @@
             "type": "bool",
             "description": "外号学习使用快速模式",
             "default": true,
-            "hint": "DeepSeek 后台学习请求使用低强度推理以控制延迟；群聊回复仍沿用原模型设置。"
+            "hint": "DeepSeek 后台外号学习关闭思考模式以控制延迟；群聊回复仍沿用原模型设置。"
           }
         }
       }
@@ -560,6 +580,11 @@
         "type": "int",
         "description": "后台外号学习超时（秒）",
         "default": 120
+      },
+      "alias_context_reviews": {
+        "type": "int",
+        "description": "每轮额外外号复核次数（0～6，不限制群聊回复）",
+        "default": 2
       }
     }
   }

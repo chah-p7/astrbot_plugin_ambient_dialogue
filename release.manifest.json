@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "a92a08b91a3116cb76d32c8ec459afe0589b9f4f4b1be4de2212d9683b43ccd3"
+      "sha256": "4cb2a583bbb84e1d9cd38b1f06a3e3aae11acb4ebe6a8dbad29773ee95782c0c"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "c09fb3e5832de7cd6996b737aaf8aa5961b93c62a7ec0b6e0daeaafd6e4b7ab7"
+      "sha256": "7bf02ead72bc58727113bc68abebf69cf54df26f14cc571973d2c7f50fccaed1"
     },
     {
       "path": "ambient/__init__.py",
@@ -30,7 +30,11 @@
     },
     {
       "path": "ambient/alias_context.py",
-      "sha256": "7db262dd6f4891f575361e2b49a4abc777edc9a85321cc68dd0de3cf971931c8"
+      "sha256": "f6b38b1125836b349a4c0e85ab5da842acc4de0d14a4811a8b59a64b73156a6f"
+    },
+    {
+      "path": "ambient/alias_evidence.py",
+      "sha256": "8a44a256561a10b5a9ffb06c18b7ce96b36a3572a4710ca24af5724bacb14701"
     },
     {
       "path": "ambient/aliases.py",
@@ -62,11 +66,11 @@
     },
     {
       "path": "ambient/memory_learning.py",
-      "sha256": "377a6ae0d2f9c7a59d2faecf0a8e6daa6403313d6cc84cdab69fdf9fe90089a5"
+      "sha256": "b131d7e46cb56afdf54de42ac20c6cf08cd37c02c4d99bd83db5b62549062ae7"
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "4fbbe77e93a8c4c677b87dbd990c4476dd5c3cbf043618ede8ec4cd652f5fe74"
+      "sha256": "e9fe330a239df65391303408025b57f34633a1651ac5a169eca1ea9e0fe96831"
     },
     {
       "path": "ambient/recall.py",
@@ -122,7 +126,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "ddd266f182e9454fe1c13386a7cb52778b449e47b14a058663dd7d0be1bf7f6d"
+      "sha256": "bd15ca37e8fbd83a3cd0f8094343f21f226f62966b4b3b6c8e745edf2fb4a6d9"
     },
     {
       "path": "pages/stickers/app.js",
@@ -142,7 +146,7 @@
     },
     {
       "path": "tests/test_alias_context.py",
-      "sha256": "a0e8aaba50146e8db0d2f7297cd3046c15124066b02cece58f0949156ceeab93"
+      "sha256": "411421cc4a6e92c56059be4375a6afe42ca6b1364490d5bb9c0b1cc5b3d3cfd0"
     },
     {
       "path": "tests/test_ambient.py",

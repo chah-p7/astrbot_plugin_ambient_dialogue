@@ -51,6 +51,7 @@ class Policy:
     alias_context_messages: int = 48
     alias_context_chars: int = 8000
     alias_context_timeout_seconds: int = 120
+    alias_context_reviews: int = 2
     style_archive_limit: int = 40
     style_archive_days: int = 30
     style_case_chars: int = 320
@@ -107,6 +108,7 @@ class Policy:
                 'alias_limit': (1, 12), 'alias_days': (7, 365),
                 'alias_context_messages': (24, 200), 'alias_context_chars': (4000, 24000),
                 'alias_context_timeout_seconds': (15, 240),
+                'alias_context_reviews': (0, 6),
                 'style_archive_limit': (0, 200), 'style_archive_days': (1, 90),
                 'style_case_chars': (80, 600), 'topic_minutes': (1, 30),
             }.get(field.name, (1, max(fallback * 5, 10)))

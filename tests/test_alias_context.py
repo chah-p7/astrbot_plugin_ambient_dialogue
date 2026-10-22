@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock
 
 import test_social_memory as fixtures
 from test_ambient import Event, context
-from ambient.alias_context import AliasLearning, prepare_batch, proposals
+from ambient.alias_context import AliasLearning, discovered_names, infer_batch, prepare_batch, proposals, structural_proposals
+from ambient.alias_evidence import human_text, pack_size, prepare_review
 from ambient.aliases import identity_lookups, known_names
 from ambient.context import Window, build_pack, compact, route_for
 from ambient.learning import quote_source
@@ -160,6 +161,216 @@ class AliasContextTests(unittest.TestCase):
         self.assertEqual('',reply_rejection('小月是青禾',row,window))
         unknown={**row,'text':'从没听过是谁'}
         self.assertEqual('',reply_rejection('不认识这个称呼',unknown,window))
+
+    def test_discovery_can_find_a_name_without_guessing_its_owner(self):
+        rows,snap,batch,_=self.scene()
+        raw=json.dumps({'names':['小月','编造的名字',None,'男同'],'aliases':[]})
+        self.assertEqual(['小月'],discovered_names(raw,batch))
+        self.assertEqual([],proposals(raw,batch,snap))
+
+    def test_repeated_media_and_old_overlap_cannot_starve_new_messages(self):
+        self.member('A');self.member('B')
+        old=[self.row('旧段落'*180,str(i),'A',ago=100+i) for i in range(12)]
+        media=self.row('[表情] [图片]','image','A',ago=30)
+        new=self.row('小月你来一下','new','B')
+        cursor=[media['at'],media['id']]
+        self.assertFalse(human_text(media))
+        batch=prepare_batch([*old,media,new],self.store.snapshot(),replace(self.policy,alias_context_chars=1500),after=cursor)
+        self.assertGreater(batch['cursor'],cursor)
+        self.assertIn('new',{r['id'] for r in batch['rows']})
+        self.assertLessEqual(pack_size(batch),1500)
+        batch=prepare_batch([media],self.store.snapshot(),self.policy)
+        self.assertTrue(batch['skip_model'])
+
+    def test_review_keeps_recent_reply_evidence_and_excludes_bot_candidates(self):
+        self.member('A','青禾');self.member('B','阿林');self.member('BOT','小月bot')
+        rows=[self.row('这小月说的话真长'+'随便聊聊'*50,'old'+str(i),'B',ago=90000+i*100)
+              for i in range(20)]
+        target=self.row('我把车修好了','target','A',ago=20)
+        name=self.row('这是小月的手艺','name','B',ago=10,quote={'id':'target','text':target['text']})
+        batch=prepare_review([*rows,target,name],self.store.snapshot(),replace(self.policy,alias_context_chars=3000),['小月'],excluded=['BOT'])
+        self.assertTrue({'name','target'} <= {r['id'] for r in batch['rows']})
+        self.assertLessEqual(pack_size(batch),3000)
+        self.assertNotIn('小月bot',{m['name'] for m in batch['data']['members']})
+        rendered=next(r for r in batch['data']['messages'] if r['id']==batch['refs']['name'])
+        self.assertEqual(batch['accounts']['A'],rendered['quoted_speaker'])
+
+    def link_scene(self):
+        self.member('A','青禾');self.member('B','阿林');self.member('C','小明')
+        a=self.row('我修的车','a','A',ago=30)
+        b=self.row('小月真能折腾','b','B',ago=20,quote={'id':'a','text':a['text']})
+        c=self.row('小月是谁','c','C')
+        snap=self.store.snapshot()
+        batch=prepare_review([a,b,c],snap,self.policy,['小月'])
+        link={'name':'小月','mention':batch['refs']['b'],'target':batch['accounts']['A'],
+              'relation':'quoted_person','evidence':[batch['refs']['b'],batch['refs']['a']]}
+        return snap,batch,link
+
+    def test_link_must_name_the_actual_quote_author_not_the_mentioner(self):
+        snap,batch,link=self.link_scene()
+        self.assertEqual(self.route.member('A'),proposals(json.dumps({'links':[link]}),batch,snap)[0]['member'])
+        for patch in ({'target':batch['accounts']['B']},{'target':batch['accounts']['C']},
+                      {'mention':'missing'},{'evidence':[batch['refs']['b']]},{'relation':'made_up'}):
+            self.assertEqual([],proposals(json.dumps({'links':[{**link,**patch}]}),batch,snap))
+        self.assertEqual([],proposals(json.dumps({'aliases':[],'links':None}),batch,snap))
+
+    def test_same_speaker_followup_keeps_listener_and_ignores_imitation(self):
+        self.member('A');self.member('B');self.member('C')
+        rows=[self.row('不来了','a','A',ago=30),self.row('<@A> 你不来？','b','B',ago=20),
+              self.row('你不是小月吗','c','B',ago=18),self.row('你也是小月？','d','C',ago=10)]
+        snap=self.store.snapshot();batch=prepare_review(rows,snap,self.policy,['小月'])
+        link={'name':'小月','mention':batch['refs']['c'],'target':batch['accounts']['A'],
+              'relation':'addressed_person','evidence':[batch['refs'][r['id']] for r in rows[:3]]}
+        self.assertEqual(self.route.member('A'),proposals(json.dumps({'links':[link]}),batch,snap)[0]['member'])
+        link.update(mention=batch['refs']['d'],evidence=[batch['refs']['d'],batch['refs']['a']],relation='topic_response')
+        self.assertEqual([],proposals(json.dumps({'links':[link]}),batch,snap))
+
+    def test_source_snippets_survive_raw_expiry_and_are_removed_on_forget(self):
+        rows,snap,batch,raw=self.scene()
+        self.store.learning.apply_context(proposals(json.dumps(raw),batch,snap),batch,now=self.now)
+        restored=type(self.store)(self.tmp.name,self.route.key,self.policy)
+        sources=restored.learning.context_rows()
+        self.assertTrue({'name1','target1'} <= {r['id'] for r in sources})
+        self.assertTrue(all(len(r['text'])<=280 for r in sources))
+        restored.edit('forget_member',{},member=self.route.member('A'),now=self.now)
+        self.assertEqual([],restored.learning.context_rows())
+
+    def test_recheck_retracts_only_revisited_automatic_wrong_binding(self):
+        rows,snap,batch,raw=self.scene()
+        items=proposals(json.dumps(raw),batch,snap)
+        self.store.learning.apply_context([{**i,'member':self.route.member('C')} for i in items],batch,now=self.now)
+        batch.update(revision=self.store.memory_revision(),review_names=['小月'])
+        self.store.learning.apply_context(items,batch,now=self.now)
+        lookup=identity_lookups({'text':'小月是谁'},self.store.snapshot())[0]
+        self.assertEqual(['A'],lookup['accounts'])
+        self.assertEqual('probable',lookup['status'])
+
+    def test_target_message_resolves_stable_member_and_cannot_conflict_with_id(self):
+        snap,batch,link=self.link_scene()
+        link.pop('target');link['target_message']=batch['refs']['a']
+        self.assertEqual(self.route.member('A'),proposals(json.dumps({'links':[link]}),batch,snap)[0]['member'])
+        link['target']=batch['accounts']['B']
+        self.assertEqual([],proposals(json.dumps({'links':[link]}),batch,snap))
+
+    def test_unresolved_scenes_persist_without_becoming_identity_and_honor_forget(self):
+        rows,snap,batch,_=self.scene()
+        batch['review_names']=['小月']
+        self.assertEqual('evidence_saved',self.store.learning.apply_context([],batch,now=self.now))
+        self.assertEqual([],self.store.snapshot()['aliases'])
+        self.assertTrue(self.store.learning.context_rows())
+        self.store.edit('forget_member',{},member=self.route.member('A'),now=self.now+1)
+        self.assertEqual([],self.store.learning.context_rows())
+        batch['revision']=self.store.memory_revision()
+        self.store.learning.apply_context([],batch,now=self.now+2)
+        self.assertEqual([],self.store.learning.context_rows())
+
+    def test_unresolved_scene_archive_is_count_bounded_and_compressible(self):
+        self.member('A');self.member('B')
+        rows=[]
+        for i in range(8):
+            rows += [self.row('这个小月又开始了','n'+str(i),'A',ago=1000-i*100),
+                     self.row('等一下','r'+str(i),'B',ago=990-i*100)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        self.store.learning.apply_context([],batch,now=self.now)
+        with self.store.connection() as db:
+            self.assertLessEqual(db.execute('SELECT COUNT(*) FROM alias_scenes').fetchone()[0],3)
+        self.store.maintain(force=True,now=self.now)
+        self.assertEqual([],self.store.learning.context_rows())
+
+    def test_response_chain_is_a_hint_and_cannot_use_a_bot_agreement(self):
+        self.member('A');self.member('B');self.member('C')
+        rows=[self.row('小月怎么开始修车了','a','A',ago=40),self.row('他爱拆东西','b','A',ago=35),
+              self.row('对','c','B',ago=30),self.row('我发现拆东西挺快乐','d','B',ago=20)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        chain=batch['data']['response_chains'][0]
+        self.assertEqual(batch['refs']['d'],chain['continuation'])
+        self.assertEqual('unconfirmed',chain['status'])
+        self.assertEqual([],self.store.snapshot()['aliases'])
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'],excluded=['B'])
+        self.assertFalse(batch['data']['response_chains'])
+
+    def test_structural_learning_uses_reply_author_and_followup_you(self):
+        self.member('A','青禾');self.member('B','阿林')
+        rows=[self.row('这机器还能修','a','A',ago=40),
+              self.row('这是小月的强项','b','B',ago=30,quote={'id':'a','text':'这机器还能修'}),
+              self.row('你又能发挥了','c','B',ago=25)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        items=structural_proposals(batch,self.store.snapshot())
+        self.assertEqual({self.route.member('A')},{i['member'] for i in items})
+        self.store.learning.apply_context(items,batch,now=self.now)
+        self.assertEqual('candidate',self.store.snapshot()['aliases'][0]['kind'])
+
+    def test_structural_learning_distinguishes_rhetorical_call_from_plain_denial(self):
+        self.member('A');self.member('B');self.member('C')
+        rows=[self.row('小月的车还在这里','old','C',ago=600),self.row('我先走了','a','A',ago=50),
+              self.row('<@A> 这就走了？','b','B',ago=40),self.row('你不是小月','c','B',ago=35)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        self.assertEqual([],structural_proposals(batch,self.store.snapshot()))
+        rows.append(self.row('你被什么东西夺舍了','d','B',ago=30))
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        items=structural_proposals(batch,self.store.snapshot())
+        self.assertEqual({self.route.member('A')},{i['member'] for i in items})
+
+    def test_first_person_recognition_stays_tentative_and_comparison_does_not_bind(self):
+        self.member('A');self.member('B')
+        rows=[self.row('小月的说话风格变了','a','A',ago=40),self.row('他爱拆机器','b','A',ago=35),
+              self.row('对','c','B',ago=30),self.row('我发现修机器很快乐','d','B',ago=20)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        items=structural_proposals(batch,self.store.snapshot())
+        self.assertEqual({self.route.member('B')},{i['member'] for i in items})
+        self.store.learning.apply_context(items,batch,now=self.now)
+        self.assertEqual('tentative',identity_lookups({'text':'小月是谁'},self.store.snapshot())[0]['status'])
+        rows[-1]['text']='我也发现修机器很快乐'
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        self.assertEqual([],structural_proposals(batch,self.store.snapshot()))
+
+    def test_first_person_chain_cannot_cross_an_explicit_topic_change(self):
+        self.member('A');self.member('B')
+        rows=[self.row('小月的说话风格变了','a','A',ago=40),self.row('他爱修车','b','A',ago=35),
+              self.row('换个话题','switch','A',ago=32),self.row('对','c','B',ago=30),
+              self.row('我发现新开的餐馆挺好吃','d','B',ago=20)]
+        batch=prepare_review(rows,self.store.snapshot(),self.policy,['小月'])
+        self.assertEqual([],structural_proposals(batch,self.store.snapshot()))
+
+    def test_pipeline_uses_source_edges_without_saved_mappings_or_extra_reviews(self):
+        self.member('A');self.member('B')
+        rows=[self.row('这机器还能修','a','A',ago=40),
+              self.row('这是小月的强项','b','B',ago=30,quote={'id':'a','text':'这机器还能修'}),
+              self.row('你又能发挥了','c','B',ago=25)]
+        snap=self.store.snapshot()
+        snap['aliases']=[{'name':'禁止进入发现提示词','member':self.route.member('B')}]
+        async def generate(system,data):
+            self.assertNotIn('禁止进入发现提示词',json.dumps(data,ensure_ascii=False))
+            self.assertNotIn('names_to_review',data)
+            return json.dumps({'names':['小月']})
+        mock=AsyncMock(side_effect=generate)
+        items,batch=asyncio.run(infer_batch(rows,snap,self.policy,mock))
+        self.assertEqual(1,mock.await_count)
+        self.assertEqual({self.route.member('A')},{i['member'] for i in items})
+        self.assertEqual([],batch['review_errors'])
+
+    def test_review_failure_keeps_unresolved_sources_and_stops_extra_calls(self):
+        rows,snap,_,_=self.scene()
+        for r in rows:r['text']='小月和小云来过这里'
+        mock=AsyncMock(side_effect=[json.dumps({'names':['小月','小云']}),TimeoutError()])
+        items,batch=asyncio.run(infer_batch(rows,snap,self.policy,mock))
+        self.assertEqual([],items)
+        self.assertEqual(2,mock.await_count)
+        self.assertEqual(['TimeoutError'],batch['review_errors'])
+        self.assertEqual('evidence_saved',self.store.learning.apply_context(items,batch,now=self.now))
+        self.assertEqual([],self.store.snapshot()['aliases'])
+        self.assertTrue(self.store.learning.context_rows())
+
+    def test_review_budget_and_cancellation_are_not_silently_retried(self):
+        rows,snap,_,_=self.scene()
+        for r in rows:r['text']='小月和小云来过这里'
+        mock=AsyncMock(side_effect=[json.dumps({'names':['小月','小云']}),json.dumps({'links':[]})])
+        items,batch=asyncio.run(infer_batch(rows,snap,replace(self.policy,alias_context_reviews=1),mock))
+        self.assertEqual(2,mock.await_count)
+        self.assertEqual(1,batch['review_count'])
+        mock=AsyncMock(side_effect=[json.dumps({'names':['小月']}),asyncio.CancelledError()])
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(infer_batch(rows,snap,self.policy,mock))
 
 
 class AliasWorkerTests(unittest.IsolatedAsyncioTestCase):
