@@ -62,7 +62,7 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "799b71472bf292d810f8935775dfa12981b49e65cd3dfe5716e37cc03fd0cef3"
+      "sha256": "7273a2a2c5dfb84aa5a3917ead87c33870833c171bd4ce93792fd97b52a44ef0"
     },
     {
       "path": "ambient/recall.py",
