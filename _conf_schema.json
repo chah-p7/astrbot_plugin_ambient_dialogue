@@ -429,6 +429,18 @@
             "type": "int",
             "description": "候选最早发布天数（1～730）",
             "default": 365
+          },
+          "video_preferred_keywords": {
+            "type": "list",
+            "description": "优先考虑的视频关键词",
+            "default": [],
+            "hint": "明确设置的选材偏好，适合当前话题时优先排序；不会记作真人分享样本。"
+          },
+          "video_discovery_seeds": {
+            "type": "list",
+            "description": "相似视频发现入口（BV 号，最多 3 个）",
+            "default": [],
+            "hint": "从这些公开视频发现相关候选，适合没有历史样本时启动；仍须按关键词、时长、日期和现场话题选材。"
           }
         }
       }

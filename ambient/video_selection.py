@@ -7,7 +7,7 @@ import re
 import time
 
 from .policy import stable_id
-from .video_sources import public_json, related_feed, resolve_reference
+from .video_sources import BVID, card_carriers, public_json, raw_payload, related_feed, resolve_reference
 from .video_taste import TasteProfile, limit
 
 
@@ -60,6 +60,33 @@ class VideoSelection:
     def learning(self, route):
         return self.videos.enabled(route) and self.rt.settings(route).get('video_learning_enabled', True) is True
 
+    def keywords(self, route):
+        value = self.rt.settings(route).get('video_preferred_keywords', [])
+        return list(dict.fromkeys(s.strip().lower()[:40] for s in value if isinstance(s,str) and s.strip()))[:10] if isinstance(value,list) else []
+
+    def matches(self, route, video):
+        content = ' '.join(video.get(k,'') for k in ('title','description','category')).lower()
+        return [key for key in self.keywords(route) if key in content]
+
+    def capture(self, route, obj, row):
+        # Counts and carrier names only: do not keep full native payloads or IDs.
+        state = self.states.setdefault(route.key, {})
+        for key, yes in [('received_messages',True),('empty_messages',row is None)]:
+            if yes: state[key] = state.get(key,0)+1
+        carriers = card_carriers(getattr(obj, 'raw_message', None))
+        parts = getattr(obj,'message',())
+        kinds = [type(p).__name__.lower() for p in parts if type(p).__name__.lower() in {'json','xml','ark','miniapp'}]
+        if carriers or kinds:
+            state['structured_messages'] = state.get('structured_messages',0)+1
+            key = 'video_card_messages' if row and row.get('video_refs') else 'unresolved_structured_messages'
+            state[key] = state.get(key,0)+1
+            state['last_carriers'] = list(dict.fromkeys([k for k,_ in carriers]+kinds))
+        if row is None:
+            data = raw_payload(getattr(obj,'raw_message',None))
+            state['last_empty_fields'] = [k for k in data if isinstance(k,str) and re.fullmatch(r'[A-Za-z_]{1,40}',k)][:24]
+            kind = str(data.get('message_type',''))
+            state['last_empty_type'] = int(kind) if kind.isdigit() and len(kind)<5 else None
+
     def profile(self, route, now):
         examples = self.rt.stores[route.key].video_taste.examples(now=now) if self.learning(route) else []
         excluded = self.rt.windows[route.key].style_excluded_senders
@@ -85,14 +112,24 @@ class VideoSelection:
                     if r.platform_id != route.platform or r.user_id != scope or not r.sender_id:
                         continue
                     body = r.content
+                    if isinstance(body,str):
+                        try: body = json.loads(body)
+                        except (ValueError,RecursionError): body = [{'type':'Plain','text':body}]
                     parts = body if isinstance(body,list) else body.get('message',body.get('content',[])) if isinstance(body,dict) else []
                     if not isinstance(parts,list):
-                        continue
+                        parts = []
                     text = ' '.join(str(p.get('text') or (p.get('data',{}).get('text','') if isinstance(p.get('data'),dict) else ''))
                                     for p in parts if isinstance(p,dict) and p.get('type') in {'Plain','plain','text'})
+                    raw = body.get('raw_message',body.get('raw_data',body)) if isinstance(body,dict) else None
+                    content = raw_payload(raw).get('content','')
+                    if not text and isinstance(content,str):
+                        text = content
+                    author = raw_payload(raw).get('author',{})
+                    author = author if isinstance(author,dict) else {}
                     row = {'id':'host:'+str(r.id),'member':route.member(r.sender_id),'sender':r.sender_id,
                            'at':timestamp(r.created_at),'self':r.sender_id==route.account,
-                           'command':text.lstrip().startswith('/'),'text':text,'video_refs':references(text,parts)}
+                           'bot_sender':author.get('bot') is True or author.get('is_you') is True,
+                           'command':text.lstrip().startswith('/'),'text':text,'video_refs':references(text,parts,raw)}
                     count += await asyncio.to_thread(store.video_taste.observe, row, self.rt.windows[route.key].style_excluded_senders)
                 if len(rows)<200:
                     break
@@ -134,7 +171,10 @@ class VideoSelection:
                 state['learning_error'] = type(exc).__name__
         profile = self.profile(route, now)
         extra, sources = {}, {}
-        for seed in profile.seeds():
+        configured = options.get('video_discovery_seeds', [])
+        seeds = [s for s in configured if isinstance(s,str) and BVID.fullmatch(s)][:3] if isinstance(configured,list) else []
+        state['configured_seeds'] = len(seeds)
+        for seed in dict.fromkeys([*seeds, *profile.seeds()]):
             try:
                 items = await related_feed(seed)
                 for item in items:
@@ -149,7 +189,8 @@ class VideoSelection:
         # Include human examples for consistent trait comparison, never as new recommendations.
         review_pool = {**{e['video']['id']:e['video'] for e in profile.examples if e['video'].get('cover')}, **pool}
         notes = await asyncio.to_thread(store.notes, review_pool, now=now)
-        state.update(samples=profile.size, related_candidates=len(extra))
+        state.update(samples=profile.size, related_candidates=len(extra),
+                     preferred_candidates=sum(bool(self.matches(route,r)) for r in pool.values()))
         self.notes[route.key] = notes
         if options.get('video_cover_selection_enabled',True) is not True:
             state['cover_review'] = 'disabled'
@@ -161,7 +202,7 @@ class VideoSelection:
         batch = [r for r in review_pool.values() if r['id'] not in notes and r.get('cover')
                  and r['duration_seconds'] <= limit(options,'video_max_seconds',300,15,1800)]
         # Rotate unseen candidates instead of inspecting the same popular prefix forever.
-        batch.sort(key=lambda r: stable_id(int(now//900),r['id']))
+        batch.sort(key=lambda r: (not bool(self.matches(route,r)), stable_id(int(now//900),r['id'])))
         batch = batch[:8]
         if not batch:
             state['cover_review'] = 'cached'

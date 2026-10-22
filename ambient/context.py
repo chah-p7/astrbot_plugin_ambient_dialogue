@@ -15,7 +15,7 @@ from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_
 from .recall import recall_rows
 from .aliases import identity_lookups, known_names, name_key, name_targets
 from .examples import select_cases
-from .video_sources import references as video_references
+from .video_sources import raw_payload, references as video_references
 
 
 def compact(value):
@@ -165,9 +165,10 @@ def event_message(event, route, *, now=None):
             image_count += kind == 'Image'
             pieces.append({'Image': '[图片]', 'Record': '[语音]', 'Video': '[视频]',
                            'File': '[文件]', 'Face': '[表情]'}[kind])
-    refs = video_references(' '.join(pieces), getattr(obj, 'message', ()))
-    if not normalized(' '.join(pieces)) and refs:
-        pieces.append('[B站分享] '+ ' '.join(r['title'] or r['ref'] for r in refs))
+    raw = getattr(obj, 'raw_message', None)
+    refs = video_references(' '.join(pieces), getattr(obj, 'message', ()), raw)
+    if refs and not video_references(' '.join(pieces)):
+        pieces.append('[B站分享] '+ ' '.join((r['title']+' ' if r['title'] else '')+r['ref'] for r in refs))
     text = normalized(' '.join(pieces))[:1800]
     mentions.extend(MENTION.findall(text))
     event_self = str(event.get_self_id() or '')
@@ -183,7 +184,6 @@ def event_message(event, route, *, now=None):
         if not attention_only:
             return None
         text = '[引用消息，无附加正文]' if quote else '[仅@机器人，无正文]'
-    raw = getattr(obj, 'raw_message', None)
     timestamp = getattr(raw, 'timestamp', None)
     if timestamp is None and isinstance(raw, dict):
         timestamp = raw.get('time')
@@ -194,12 +194,15 @@ def event_message(event, route, *, now=None):
     except (ValueError, TypeError, OverflowError):
         at = now
     at = min(now, at)
-    self_message = sender == route.account or (event_self not in {'', 'qq_official', 'unknown_selfid'} and sender == event_self)
+    author = raw_payload(raw).get('author', {})
+    author = author if isinstance(author, dict) else {}
+    self_message = author.get('is_you') is True or sender == route.account or (event_self not in {'', 'qq_official', 'unknown_selfid'} and sender == event_self)
     return {'id': identity, 'sender': sender, 'member': route.member(sender),
             'name': display_name(event.get_sender_name(), sender), 'text': text,
             'at': at, 'self': self_message, 'command': body.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
             'attention_only': attention_only, 'directed': directed,
+            **({'bot_sender': True} if author.get('bot') is True else {}),
             **({'video_refs': refs} if refs else {}),
             **({'image_count': image_count} if image_count else {})}
 

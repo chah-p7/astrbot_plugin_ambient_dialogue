@@ -94,7 +94,7 @@ class VideoTaste:
 
     def observe(self, row, excluded=(), *, now=None):
         now = time.time() if now is None else now
-        if (row.get('self') or row.get('command') or row.get('sender') in excluded
+        if (row.get('self') or row.get('bot_sender') or row.get('command') or row.get('sender') in excluded
                 or not row.get('member') or not 0 <= now-row['at'] <= self.days*86400):
             return 0
         refs = row.get('video_refs') or references(row.get('text', ''))

@@ -174,7 +174,9 @@ class Runtime:
                 for bvid in set(BVID.findall(row['text'])):
                     await asyncio.to_thread(store.remember_video, bvid, row['id'], now=now)
                 if self.videos.selection.learning(route):
-                    await asyncio.to_thread(store.video_taste.observe, row, window.style_excluded_senders, now=now)
+                    added = await asyncio.to_thread(store.video_taste.observe, row, window.style_excluded_senders, now=now)
+                    state = self.videos.selection.states.setdefault(route.key,{})
+                    state['human_shares_collected'] = state.get('human_shares_collected',0)+added
         except Exception:
             self.errors += 1
         return True
@@ -186,11 +188,14 @@ class Runtime:
         if not self.enabled(route):
             return
         row = event_message(event, route)
+        if self.videos.enabled(route):
+            self.videos.selection.capture(route, event.message_obj, row)
         if row and self.owns(route):
             self.isolate_followups(event)
             if row['directed'] and not row['self'] and not row['command']:
                 self.normal_pending.setdefault(route.key, {})[row['id']] = row['at']
-                if (row.get('attention_only') and not row.get('quote') and request_type
+                if (((row.get('attention_only') and not row.get('quote'))
+                        or (row.get('video_refs') and not plain_text(getattr(event,'message_str','')))) and request_type
                         and event.get_extra('provider_request') is None):
                     # Enter the normal host pipeline before its empty-message
                     # gate, without inventing user text or bypassing Persona.

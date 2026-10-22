@@ -23,6 +23,7 @@ VIDEO_RULE = ('\nvideo_candidates 是可分享的 B 站公开标题、作者简�
               '同一回复选择视频时不再附表情；插话 JSON 把标记放在 text 中。')
 VIDEO_RULE += ('筛选线索 selection 只代表标题或封面有怎样的梗点，不代表已看过正片。'
                '群偏好来自真人实际分享，是弱倾向，不代表每个人都喜欢；优先接当前话题。'
+               'requested_keywords 是管理员明确设置的选材偏好，适合分享时优先考虑；它不是群友分享记录。'
                '主动搬史优先反差、鬼畜、二创、荒诞混搭等具体梗点，普通预告和资讯不因为热门就硬推。'
                '有人明确要某类视频时按其需求选择；没有合适的就不发。')
 
@@ -92,7 +93,7 @@ class Videos:
         self.selection = VideoSelection(self)
 
     def pool(self, route):
-        extra = self.selection.extra.get(route.key, {}) if self.selection.learning(route) else {}
+        extra = self.selection.extra.get(route.key, {}) if self.enabled(route) else {}
         return {**extra, **self.candidates}
 
     def enabled(self, route):
@@ -143,14 +144,15 @@ class Videos:
             note = notes.get(row['id'], {})
             affinity = profile.affinity(row, note)
             abstract = note.get('score', 0)
+            preferred = bool(self.selection.matches(route,row))
             overlap = len(target & words(row['title']+' '+row['description']))
             if (row['id'] in seen or row['duration_seconds'] > maximum
                     or (self.share_format(route) != 'link' and not row.get('cover'))
                     or not 0 <= now-row['published_at'] <= bounded(options, 'video_max_age_days',365,1,730)*86400
-                    or (topics and not any(t in content for t in topics) and affinity < .5 and abstract < 2)):
+                    or (topics and not any(t in content for t in topics) and not preferred and affinity < .5 and abstract < 2)):
                 continue
             rows.append(row)
-            ranks[row['id']] = (min(6,overlap), abstract+affinity, row['published_at'])
+            ranks[row['id']] = (min(6,overlap), preferred, abstract+affinity, row['published_at'])
         rows.sort(key=lambda r:ranks[r['id']], reverse=True)
         choices = []
         for row in rows:
@@ -163,6 +165,7 @@ class Videos:
             discovery = next((r for r in rows if r not in choices and notes.get(r['id'],{}).get('score',0)>=2
                               and profile.affinity(r,notes.get(r['id']))<.5
                               and ranks[r['id']][0]>=ranks[choices[-1]['id']][0]
+                              and ranks[r['id']][1]>=ranks[choices[-1]['id']][1]
                               and sum(x['author']==r['author'] for x in choices[:4])<2),None)
             if discovery: choices[-1] = discovery
         def prompt_choices():
@@ -173,6 +176,9 @@ class Videos:
                     item['selection'] = notes[row['id']]
                 if profile.affinity(row,notes.get(row['id']))>=.5:
                     item['group_share_similarity'] = 'weak' if profile.size<3 else 'supported'
+                matches = self.selection.matches(route,row)
+                if matches:
+                    item['requested_keywords'] = matches
                 result.append(item)
             return result
         while choices and len(compact(prompt_choices())) > 1800:

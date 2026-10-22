@@ -8,17 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from ambient.policy import Policy
 
-labels = dict(zip(asdict(Policy()), ['每群存储额度（MiB）', '开始压缩占比（%）', '压缩目标占比（%）',
-    '滚动摘要字数', '每人偏好条数', '单条记忆字数', '记忆整理间隔（秒）', '每批记忆条数',
-    '候选队列条数', '普通成员过期天数', '普通话题过期天数', '原始聊天保存小时（0 仅内存）',
-    '原始聊天最大条数', '近期消息条数', '近期消息分钟数', '近期消息字数', '口吻样本条数',
-    '口吻样本分钟数', '每人口吻样本条数', '口吻样本字数', '每个样本的邻近前话条数（0 关闭）',
-    '样本邻近前话最大间隔（秒）', '记忆注入字数', '节奏统计字数',
-    '总上下文字数', '插话判断间隔（秒）', '插话等待安静（秒）', '插话冷却（秒，可为 0）',
-    '插话消息新鲜期（秒）', '插话模型超时（秒）', '插话最大字数', '普通回复消息新鲜期（秒）',
-    '回复修正超时（秒）', '分条目标字数（0 关闭，代码和链接保持完整）', '分条发送间隔（毫秒）']))
-fields = {key:{'type': 'float' if isinstance(value,float) or key=='quota_mb' else 'int',
-    'description': labels[key], 'default': value} for key,value in asdict(Policy()).items()}
+documented = json.loads((ROOT/'_conf_schema.json').read_text(encoding='utf-8'))
+fields = {key:{**documented['limits']['items'][key], 'default':value}
+          for key,value in asdict(Policy()).items()}
 schema = {'groups': {'type':'template_list', 'description':'启用的群', 'default':[],
     'hint':'按平台、机器人账号和群标识隔离。采集验证关闭后才注入上下文及接管记忆。',
     'templates': {'group': {'name':'群', 'display_item':'umo', 'items': {
@@ -33,6 +25,10 @@ schema = {'groups': {'type':'template_list', 'description':'启用的群', 'defa
             'hint':'link：配文＋链接；image：配文＋链接后单独发封面预览，无需 ARK 权限（需中文字体）；ark：QQ 官方大图卡片，需平台权限。'},
         'video_topics': {'type':'list','description':'视频选材关键词（标题、简介、分区；空列表不限）',
             'default':['搞笑','鬼畜','抽象','整活','游戏','动画','动物']},
+        'video_preferred_keywords': {'type':'list','description':'优先考虑的视频关键词','default':[],
+            'hint':'明确设置的选材偏好，适合当前话题时优先排序；不会记作真人分享样本。'},
+        'video_discovery_seeds': {'type':'list','description':'相似视频发现入口（BV 号，最多 3 个）','default':[],
+            'hint':'从这些公开视频发现相关候选，适合没有历史样本时启动；仍须按关键词、时长、日期和现场话题选材。'},
         'video_max_seconds': {'type':'int','description':'候选视频最长秒数','default':300},
         'video_refresh_seconds': {'type':'int','description':'公开视频列表刷新间隔（秒）','default':900},
         'video_candidate_minutes': {'type':'int','description':'候选列表有效分钟数','default':60},
@@ -54,4 +50,12 @@ schema = {'groups': {'type':'template_list', 'description':'启用的群', 'defa
         'quota_mb': {'type':'float','description':'本群额度（MiB，0 继承默认）','default':0},
         'limits': {'type':'object','description':'本群参数','items': fields}}}}},
     'limits': {'type':'object','description':'默认参数','items':fields}}
-(ROOT/'_conf_schema.json').write_text(json.dumps(schema,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
+# Keep documented settings outside Policy (vision, alias learning, and future
+# extensions); positional label lists silently drift when Policy grows.
+items = documented['groups']['templates']['group']['items']
+for key,value in schema['groups']['templates']['group']['items'].items():
+    items.setdefault(key,value)
+for target in (documented['limits']['items'], items['limits']['items']):
+    for key,value in fields.items():
+        target[key]['default'] = value['default']
+(ROOT/'_conf_schema.json').write_text(json.dumps(documented,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')

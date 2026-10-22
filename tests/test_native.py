@@ -24,6 +24,37 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_qq_adapter_preserves_card_for_plugin_even_without_text_or_at(self):
+        from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import PatchedGroupMessage, QQOfficialPlatformAdapter
+        from astrbot.core.platform.astrbot_message import MessageType
+        from astrbot.core.provider.entities import ProviderRequest
+        from ambient.context import event_message
+        from test_video_cards import miniapp
+        data={'id':'native-card','group_openid':'GROUP_A','content':'',
+              'author':{'member_openid':'USER_1','username':'群友','bot':False},
+              'timestamp':datetime.now(timezone.utc).isoformat(),
+              'message_type':110,'msg_elements':[{'type':'json','data':json.dumps(miniapp(),ensure_ascii=False)}]}
+        message=PatchedGroupMessage(self.client.api,None,data)
+        abm=await QQOfficialPlatformAdapter._parse_from_qqofficial(message,MessageType.GROUP_MESSAGE)
+        self.assertEqual('',abm.message_str)
+        self.assertFalse(any(type(p).__name__=='Json' for p in abm.message))
+        self.event.message_obj=abm
+        self.event.message_str=''
+        row=event_message(self.event,self.route)
+        self.assertIn('奶蛙小剧场',row['text'])
+        with tempfile.TemporaryDirectory() as tmp:
+            rt=Runtime(tmp,self.ctx,{'groups':[{'umo':self.route.umo,'capture_only':False,'video_sharing_enabled':True}]})
+            try:
+                await rt.observe(self.event,request_type=ProviderRequest)
+                self.assertEqual(1,len(rt.stores[self.route.key].video_taste.examples(now=datetime.now().timestamp())))
+                self.assertIsNone(self.event.get_extra('provider_request'))
+                self.event.is_at_or_wake_command=True
+                await rt.observe(self.event,request_type=ProviderRequest)
+                self.assertIn('奶蛙小剧场',self.event.get_extra('provider_request').prompt)
+                self.assertEqual([],self.calls)
+            finally:
+                await rt.close()
+
     async def test_video_preview_upload_then_separate_text_and_image_without_ark(self):
         from ambient.delivery import send_reply_parts
         from ambient.policy import Policy
