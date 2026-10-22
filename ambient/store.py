@@ -9,6 +9,7 @@ import time
 
 from .policy import Policy, display_name, normalized, stable_id
 from .memory_learning import MemoryLearning
+from .video_taste import VideoTaste
 
 
 PROTECTED = frozenset({'boundary', 'promise', 'todo'})
@@ -30,6 +31,7 @@ class Store:
         self.path = self.directory / 'state.sqlite3'
         self.lock = RLock()
         self.learning = MemoryLearning(self)
+        self.video_taste = VideoTaste(self)
         with self.connection() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS image_notes (
                 message TEXT, position INTEGER, member TEXT, at REAL, digest TEXT,
@@ -75,6 +77,7 @@ class Store:
                     bvid TEXT PRIMARY KEY, at REAL NOT NULL, receipt TEXT NOT NULL DEFAULT '');
             ''')
             self.learning.create(db)
+            self.video_taste.create(db)
             db.execute('INSERT OR IGNORE INTO meta(id,group_id) VALUES(1,?)', (group,))
             if db.execute('SELECT group_id FROM meta').fetchone()[0] != group:
                 raise ValueError('Ambient群标识不匹配')
@@ -206,6 +209,7 @@ class Store:
                 self._trim_raw(db, now)
                 self._trim_images(db, now)
                 self.learning.trim(db, now, compress=compress)
+                self.video_taste.trim(db, now, compress=compress)
                 if compress:
                     db.execute('DELETE FROM raw_messages')
                     db.execute('DELETE FROM image_notes')
@@ -488,6 +492,7 @@ class Store:
                 (r['member'] == member and (operation == 'forget_member' or r['id'] == fact_id))])
             if operation == 'forget_member':
                 self.learning.forget(db, member, now)
+                self.video_taste.forget(db, member)
                 db.execute('DELETE FROM image_notes WHERE member=?', (member,))
                 db.execute('DELETE FROM members WHERE id=?', (member,))
                 # Delete this sender's raw cache too; runtime clears its RAM copy.

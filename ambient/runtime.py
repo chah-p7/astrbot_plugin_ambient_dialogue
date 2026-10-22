@@ -135,6 +135,7 @@ class Runtime:
                 self.routes[route.key] = route
             p = self.policy(route)
             self.stores[route.key].policy = p
+            self.stores[route.key].video_taste.configure(self.settings(route))
             self.windows[route.key].policy = p
             self.windows[route.key].vision_enabled = self.vision.enabled(route)
             excluded = self.settings(route).get('style_excluded_senders', [])
@@ -172,6 +173,8 @@ class Runtime:
             if self.videos.enabled(route):
                 for bvid in set(BVID.findall(row['text'])):
                     await asyncio.to_thread(store.remember_video, bvid, row['id'], now=now)
+                if self.videos.selection.learning(route):
+                    await asyncio.to_thread(store.video_taste.observe, row, window.style_excluded_senders, now=now)
         except Exception:
             self.errors += 1
         return True
@@ -361,7 +364,7 @@ class Runtime:
                             video = self.videos.selected(route, event.get_extra('ambient_selected_video'),
                                                          event.get_extra('ambient_video_choices') or {})
                             if video:
-                                await self.videos.verify(video)
+                                await self.videos.verify(video, route)
                                 card = await self.videos.card(route, video)
                                 if not card or 'data' in card:
                                     text = share_text(text, video)
@@ -581,6 +584,7 @@ class Runtime:
             await asyncio.to_thread(store.edit, 'forget_member', {}, member=member)
             window.forget(member)
             self.vision.forget(route)
+            self.videos.selection.forget(route)
             window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             return '已删除你在本群的记忆和 Ambient 原话缓存。'
         if text.startswith(('删除 ', '完成 ')):

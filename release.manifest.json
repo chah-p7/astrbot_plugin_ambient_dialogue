@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "9b0003a6c016da54946c99bcfc79cd23f207da7bb84123df6c36cbaa1f487927"
+      "sha256": "67b35c70becc8929c32e74e14ab9c59f071f8a26a3640195266099dad0becde3"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "30989dd442afd2d9ec45a6bfe01f5f01df9a364b4e1b6f986d2450ddb5f334bd"
+      "sha256": "8618df52a931aca78d3acce8b3b2f315a9df0ae4683cdecd70bc38e327430c8c"
     },
     {
       "path": "ambient/__init__.py",
@@ -42,7 +42,7 @@
     },
     {
       "path": "ambient/context.py",
-      "sha256": "0197cc249720266aafdcc2d45400dc7ec5f6dc8bc7475534955bbca14287f160"
+      "sha256": "dcb878789624358ee20ec909b361256bc2db0a038e6c2750904768b90dc2d121"
     },
     {
       "path": "ambient/delivery.py",
@@ -58,7 +58,7 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "470795216a2b74de7348c92d64d20d7745278d30c6ef8506731d0afb2e67b7d3"
+      "sha256": "587bb3292b67966c36392086e08895914f51b244b7fc2b1726b7bb6ddd1642d2"
     },
     {
       "path": "ambient/learning.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "f6cda81457f1f3340a4ad2a306daf5b4a1f834bda993d2d48eb043e7e936fe77"
+      "sha256": "3874d8d8ebc74fde0411a186f3036a49ab558e32f4d098f68568c6507b980d1d"
     },
     {
       "path": "ambient/search.py",
@@ -98,7 +98,7 @@
     },
     {
       "path": "ambient/store.py",
-      "sha256": "45111554b0b4d540518cbc5ec95f358462f5c101595fe254c31d35496035c91b"
+      "sha256": "794b9667cbf5d19207ad185edb2ff5c0fbfccab8de61c2cbe45d52cb97c8def4"
     },
     {
       "path": "ambient/transport.py",
@@ -109,8 +109,20 @@
       "sha256": "b94a08330498f2c6f68da23c38127b79c101a8063abee57762c068628389cbd8"
     },
     {
+      "path": "ambient/video_selection.py",
+      "sha256": "602278dfb83f496d68fd87bb1bef17783b621c418f6382f2c197e0880e22a779"
+    },
+    {
+      "path": "ambient/video_sources.py",
+      "sha256": "b59ab3c47cebf201e9684e21a5f8813a03a7a7f690f31d68b47eaaabee6a2b4b"
+    },
+    {
+      "path": "ambient/video_taste.py",
+      "sha256": "2cb41cac3724fff91fbb9b7e71bd138f00bf1c1f4d731cd4ea04cffe62756819"
+    },
+    {
       "path": "ambient/videos.py",
-      "sha256": "8d3425c8ba1c94121f444eb30e014023537af6e6aa571f6ad9a1c050153ed9cc"
+      "sha256": "7542be9e8c57a828b69f49895064cf52414ffe1da32f1addcc1306ab0035d572"
     },
     {
       "path": "ambient/vision.py",
@@ -134,7 +146,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "f6552f4f60a8263efbfc243b56061c23f1b6a413aa25b41e637241323d04f15b"
+      "sha256": "b60e56cc6234701652bc15b08b6627dbf8bdd492573c2873e2810d8a46598db6"
     },
     {
       "path": "pages/stickers/app.js",
@@ -209,6 +221,10 @@
       "sha256": "533e1a2d9e193f36289cf4f61db6d5505ccffd7e686206f4ba3bde9a2d876f39"
     },
     {
+      "path": "tests/test_video_taste.py",
+      "sha256": "4c3299963642b7db47d4226ad3dab20b4f0056a60ae801e93a312e8f2a88f44a"
+    },
+    {
       "path": "tests/test_videos.py",
       "sha256": "47ccad86732cebe7b10edf253e1911ca7a92afa4f8fd58cfffc7bc2c8dc08ab8"
     },
@@ -218,7 +234,7 @@
     },
     {
       "path": "tools/build_schema.py",
-      "sha256": "e9d9a2cb360c29801f807ee4b4372c1d457bd8ab057d7c8295ea844733c404ad"
+      "sha256": "46d10c3722c9b9c61a52e1848771b5b76345004887d5ae0a1102a86e7bfbd034"
     },
     {
       "path": "tools/evaluate_style.py",

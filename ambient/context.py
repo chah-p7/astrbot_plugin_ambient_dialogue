@@ -15,6 +15,7 @@ from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_
 from .recall import recall_rows
 from .aliases import identity_lookups, known_names, name_key, name_targets
 from .examples import select_cases
+from .video_sources import references as video_references
 
 
 def compact(value):
@@ -164,6 +165,9 @@ def event_message(event, route, *, now=None):
             image_count += kind == 'Image'
             pieces.append({'Image': '[图片]', 'Record': '[语音]', 'Video': '[视频]',
                            'File': '[文件]', 'Face': '[表情]'}[kind])
+    refs = video_references(' '.join(pieces), getattr(obj, 'message', ()))
+    if not normalized(' '.join(pieces)) and refs:
+        pieces.append('[B站分享] '+ ' '.join(r['title'] or r['ref'] for r in refs))
     text = normalized(' '.join(pieces))[:1800]
     mentions.extend(MENTION.findall(text))
     event_self = str(event.get_self_id() or '')
@@ -196,6 +200,7 @@ def event_message(event, route, *, now=None):
             'at': at, 'self': self_message, 'command': body.startswith(('/', '／')),
             'attachment': attachment, 'mentions': mentions, 'quote': quote,
             'attention_only': attention_only, 'directed': directed,
+            **({'video_refs': refs} if refs else {}),
             **({'image_count': image_count} if image_count else {})}
 
 
