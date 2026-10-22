@@ -17,6 +17,7 @@ from .store import Store
 from .transport import Transport
 from .search import generate, settings_id
 from .stickers import Stickers, STICKER_RULE, parse_sticker
+from .videos import BVID, VIDEO_RULE, Videos, parse_video, share_text
 
 
 logger = logging.getLogger('astrbot')
@@ -25,7 +26,8 @@ route_or_settings_changed stale_before_send duplicate_delivery already_attempted
 repair_context_expired_or_changed repair_provider_changed search_context_changed search_incomplete transport_route_expired_or_changed
 qq_native_contract_unavailable qq_reply_anchor_unavailable qq_client_changed
 qq_receipt_unconfirmed qq_reply_slots_exhausted onebot_native_client_unavailable onebot_account_mismatch
-onebot_receipt_unconfirmed'''.split())
+onebot_receipt_unconfirmed video_source_unavailable video_source_changed video_already_shared
+video_no_longer_available'''.split())
 
 
 def error_code(exc):
@@ -43,6 +45,7 @@ class Runtime:
         self.captured = 0
         self.interjections = Interjections(self)
         self.stickers = Stickers(self)
+        self.videos = Videos(self)
         self.closed = False
 
     def settings(self, route):
@@ -158,6 +161,9 @@ class Runtime:
         self.captured += 1
         try:
             await asyncio.to_thread(store.append_raw, row, now=now)
+            if self.videos.enabled(route):
+                for bvid in set(BVID.findall(row['text'])):
+                    await asyncio.to_thread(store.remember_video, bvid, row['id'], now=now)
         except Exception:
             self.errors += 1
         return True
@@ -221,6 +227,7 @@ class Runtime:
         snap = await asyncio.to_thread(store.snapshot)
         pack = build_pack(window, snap, row, now=time.time(), memory_status=status)
         event.set_extra('ambient_sticker_choices', self.stickers.add_choices(route, pack))
+        event.set_extra('ambient_video_choices', self.videos.add_choices(route, pack))
         return pack
 
     async def inject(self, event, request, part_type):
@@ -238,6 +245,8 @@ class Runtime:
             system = system+'\n'+SYSTEM_RULES
         if pack.get('sticker_choices') and STICKER_RULE not in system:
             system += STICKER_RULE
+        if pack.get('video_candidates') and VIDEO_RULE not in system:
+            system += VIDEO_RULE
         request.extra_user_content_parts, request.system_prompt = parts, system
         request.prompt = pack['current_message']['text']
         # The native conversation remains an archive. Both paths now use the
@@ -280,6 +289,7 @@ class Runtime:
                 text = ''.join(str(p.text) for p in chain.chain if type(p).__name__ == 'Plain').strip()
                 plain = all(type(p).__name__ in {'Plain', 'Reply', 'At'} for p in chain.chain)
                 sticker = None
+                video = None
                 attempted = False
                 claimed = False
                 confirmed_parts = 0
@@ -297,10 +307,14 @@ class Runtime:
                         reason = reason or self.output_rejection(event, text, row, window, own_receipts=own_receipts)
                     if sticker and not self.stickers.selected(route, sticker['id'], event.get_extra('ambient_sticker_choices') or []):
                         reason = 'sticker_no_longer_available'
+                    if video and not self.videos.selected(route, video['id'], event.get_extra('ambient_video_choices') or {}):
+                        reason = 'video_no_longer_available'
                     if reason:
                         raise ValueError(reason)
                     if not claimed and not store.claim_delivery(row['id'], stable_id(text if plain else str(chain), sticker['id'] if sticker else '')):
                         raise ValueError('duplicate_delivery')
+                    if video and not claimed:
+                        self.videos.claim(route, video)
                     claimed = True
                     sequence = store.claim_qq_part(row['id']) if route.adapter == 'qq_official' else None
                     attempted = True
@@ -321,8 +335,15 @@ class Runtime:
                         # before agent completion retain the original guard.
                         if event.get_extra('ambient_agent_done'):
                             text, sticker = await self.checked_sticker_reply(event, route, text)
+                            video = self.videos.selected(route, event.get_extra('ambient_selected_video'),
+                                                         event.get_extra('ambient_video_choices') or {})
+                            if video:
+                                await self.videos.verify(video)
+                                text = share_text(text, video)
+                                sticker = None
                         else:
                             text, _ = parse_sticker(text, [])
+                            text, _ = parse_video(text, {})
                         if not text and not sticker:
                             return
                         receipts = await send_reply_parts(Transport(self.context, event, route), text,
@@ -450,18 +471,35 @@ class Runtime:
 
     async def checked_sticker_reply(self, event, route, text):
         offered = event.get_extra('ambient_sticker_choices') or []
+        offered_videos = event.get_extra('ambient_video_choices') or {}
+        text, video_id = parse_video(text, offered_videos)
+        video_id = video_id or event.get_extra('ambient_selected_video') or ''
+        video = self.videos.selected(route, video_id, offered_videos)
+        if video_id and not video:
+            raise ValueError('video_no_longer_available')
         clean, selected = parse_sticker(text, offered)
         selected = selected or event.get_extra('ambient_selected_sticker') or ''
         sticker = self.stickers.selected(route, selected, offered)
+        if video:
+            sticker = None
+            clean = clean or '来个视频'
         if clean or not sticker:
             clean = await self.checked_reply(event, route, clean)
+            clean, repaired_video = parse_video(clean, offered_videos)
+            if repaired_video:
+                video = self.videos.selected(route, repaired_video, offered_videos)
             clean, repaired_selection = parse_sticker(clean, offered)
             if repaired_selection:
                 sticker = self.stickers.selected(route, repaired_selection, offered)
             if not clean and not sticker:
                 clean = REPLY_FAILURE_NOTICE
                 event.set_extra('ambient_reply_notice', True)
+        if event.get_extra('ambient_reply_notice'):
+            video = None
+        if video:
+            sticker = None
         event.set_extra('ambient_selected_sticker', sticker['id'] if sticker else '')
+        event.set_extra('ambient_selected_video', video['id'] if video else '')
         return clean, sticker
 
     async def response(self, event, response):
@@ -549,9 +587,11 @@ class Runtime:
             self.next_maintenance[key] = now+store.policy.batch_seconds
         await self.interjections.tick(now)
         self.stickers.tick()
+        self.videos.tick(now)
 
     def status(self):
         return {'captured': self.captured, 'injected': self.injected, 'errors': self.errors,
+                'videos': self.videos.status(),
                 'groups': {key: {'raw_in_memory': len(self.windows[key].rows),
                     'used_bytes': self.stores[key].size(),
                     'reply': self.replies.get(key, {}),
@@ -562,3 +602,4 @@ class Runtime:
         self.closed = True
         await self.interjections.close()
         await self.stickers.close()
+        await self.videos.close()

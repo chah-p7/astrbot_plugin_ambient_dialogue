@@ -66,6 +66,8 @@ class Store:
                     key TEXT PRIMARY KEY, at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS qq_reply_slots (
                     anchor TEXT PRIMARY KEY, used INTEGER NOT NULL, at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS video_shares (
+                    bvid TEXT PRIMARY KEY, at REAL NOT NULL, receipt TEXT NOT NULL DEFAULT '');
             ''')
             db.execute('INSERT OR IGNORE INTO meta(id,group_id) VALUES(1,?)', (group,))
             if db.execute('SELECT group_id FROM meta').fetchone()[0] != group:
@@ -314,6 +316,9 @@ class Store:
         return True
 
     def _trim_raw(self, db, now):
+        db.execute('DELETE FROM video_shares WHERE at<?', (now-90*86400,))
+        db.execute('DELETE FROM video_shares WHERE bvid IN (SELECT bvid FROM video_shares '
+                   'ORDER BY at DESC,bvid LIMIT -1 OFFSET 512)')
         db.execute('DELETE FROM delivery_claims WHERE at<?', (now-3600,))
         db.execute('DELETE FROM qq_reply_slots WHERE at<?', (now-3600,))
         db.execute('DELETE FROM raw_messages WHERE at<?',
@@ -341,6 +346,31 @@ class Store:
             db.execute('DELETE FROM delivery_claims WHERE key IN (SELECT key FROM delivery_claims '
                        'ORDER BY at DESC,key LIMIT -1 OFFSET ?)', (self.policy.raw_limit,))
         return bool(changed)
+
+    def video_history(self, days=30, *, now=None):
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            return {r[0] for r in db.execute('SELECT bvid FROM video_shares WHERE at>=?', (now-days*86400,))}
+
+    def claim_video(self, bvid, days=30, *, now=None):
+        """Reserve before send, including uncertain sends; never claim a receipt."""
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('SELECT 1 FROM video_shares WHERE bvid=? AND at>=?', (bvid, now-days*86400)).fetchone():
+                return False
+            if self.size() >= self.policy.quota_bytes:
+                return False
+            db.execute('INSERT OR REPLACE INTO video_shares VALUES(?,?,?)', (bvid, now, ''))
+            self._trim_raw(db, now)
+        return True
+
+    def remember_video(self, bvid, receipt, *, now=None):
+        now = time.time() if now is None else now
+        with self.connection() as db:
+            if self.size() < self.policy.quota_bytes:
+                db.execute('INSERT OR REPLACE INTO video_shares VALUES(?,?,?)', (bvid, now, stable_id(receipt)))
+                self._trim_raw(db, now)
 
     def load_raw(self, *, now):
         with self.connection() as db:
