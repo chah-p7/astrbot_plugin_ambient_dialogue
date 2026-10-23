@@ -444,9 +444,9 @@
           },
           "video_auto_share_enabled": {
             "type": "bool",
-            "description": "在合适的群聊时机自动搬史",
+            "description": "定期主动分享群聊视频",
             "default": false,
-            "hint": "启用自然插话后生效。复用最新真人消息与同一次模型请求，明确安排选片配文；QQ 官方仍需有效消息回复窗口。"
+            "hint": "复用后台维护与共同群聊上下文。独立于自然插话，无需新消息或被动回复窗口；QQ群需允许机器人主动发言。"
           },
           "video_auto_share_interval_seconds": {
             "type": "int",

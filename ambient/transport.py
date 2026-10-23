@@ -72,13 +72,14 @@ async def upload_qq_image(platform, group, png, check=lambda: None):
 
 
 class Transport:
-    def __init__(self, context, event, route, *, now=None):
+    def __init__(self, context, event, route, *, now=None, proactive=False):
         now = time.time() if now is None else now
         self.context, self.event, self.route = context, event, route
+        self.proactive = proactive
         self.platform = context.get_platform_inst(route.platform)
         self.expires = now + 180
-        self.anchor = str(getattr(event.message_obj, 'message_id', '') or '')
-        if route.adapter == 'qq_official':
+        self.anchor = '' if proactive else str(getattr(event.message_obj, 'message_id', '') or '')
+        if route.adapter == 'qq_official' and not proactive:
             raw = event.message_obj.raw_message
             stamp = getattr(raw, 'timestamp', None)
             at = stamp.timestamp() if isinstance(stamp, datetime) else datetime.fromisoformat(str(stamp).replace('Z', '+00:00')).timestamp()
@@ -89,8 +90,9 @@ class Transport:
 
     def check(self, now=None):
         now = time.time() if now is None else now
-        if (now >= self.expires or self.context.get_platform_inst(self.route.platform) is not self.platform
-                or route_for(self.context, self.event) != self.route):
+        if (now >= self.expires or self.platform is None or self.context.get_platform_inst(self.route.platform) is not self.platform
+                or (self.proactive and self.route.adapter=='qq_official' and str(self.platform.appid)!=self.route.account)
+                or (not self.proactive and route_for(self.context, self.event) != self.route)):
             raise ValueError('transport_route_expired_or_changed')
 
     async def prepare_image(self, png):
@@ -137,18 +139,23 @@ class Transport:
                 # Allocated durably at the final send gate. Identical parts
                 # still need distinct msg_id + msg_seq pairs in QQ.
                 kwargs['json']['msg_seq'] = sequence
+            if self.proactive:
+                for key in ('msg_id', 'event_id', 'msg_seq'):
+                    kwargs['json'].pop(key, None)
             # Local facade retains authentication/pooling while avoiding SDK retry.
             async with client.http._session.request(method=route.method, url=route.url,
                     headers=client.http._headers, timeout=ClientTimeout(total=15),
                     allow_redirects=False, **kwargs) as response:
                 if response.status != 200:
+                    try:
+                        body = await response.json()
+                        code = body.get('code') if isinstance(body, dict) else None
+                    except (ValueError, TypeError):
+                        code = None
+                    code = code if type(code) is int else None
+                    if self.proactive and code in {40034105,40034100}:
+                        raise ValueError('qq_proactive_permission_required' if code==40034105 else 'qq_proactive_rate_limited')
                     if ark is not None:
-                        try:
-                            body = await response.json()
-                            code = body.get('code') if isinstance(body, dict) else None
-                        except (ValueError, TypeError):
-                            code = None
-                        code = code if type(code) is int else None
                         logging.getLogger('astrbot').warning('Ambient QQ ARK rejected: http=%s code=%s', response.status, code)
                         if code == 40034126:
                             raise ValueError('qq_ark_template_permission_required')

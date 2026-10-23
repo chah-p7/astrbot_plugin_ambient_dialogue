@@ -24,7 +24,22 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_auto_video_from_ordinary_chat_sends_separate_native_caption_and_preview(self):
+    async def test_proactive_permission_rejection_is_reported_without_passive_retry(self):
+        self.status, self.response = 400, {'code':40034105,'message':'private server detail'}
+        sender = Transport(self.ctx,None,self.route,proactive=True)
+        with self.assertRaisesRegex(ValueError,'qq_proactive_permission_required'):
+            await sender.send('scheduled share',AsyncMock())
+        self.assertEqual(1,len(self.calls))
+        self.assertTrue({'msg_id','msg_seq','event_id'}.isdisjoint(self.calls[0]['json']))
+
+    async def test_proactive_changed_account_stops_before_http(self):
+        sender = Transport(self.ctx,None,self.route,proactive=True)
+        self.platform.appid = 'other-account'
+        with self.assertRaisesRegex(ValueError,'transport_route_expired_or_changed'):
+            await sender.send('scheduled share',AsyncMock())
+        self.assertEqual([],self.calls)
+
+    async def test_proactive_video_without_incoming_message_has_two_receipts_and_no_passive_fields(self):
         from test_videos import FIRST,raw_video
         from ambient.videos import video_row,big_image_card
         self.response = lambda: ({'file_info':'preview-file'} if self.calls[-1]['url'].endswith('/files')
@@ -42,20 +57,20 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
                 rt.videos.fetched_at=datetime.now().timestamp()
                 rt.videos.verify=AsyncMock()
                 rt.videos.card=AsyncMock(return_value={'data':b'preview-jpeg','text':big_image_card(video)['text']})
-                await rt.observe(self.event)
-                await rt.interjections.run(self.route,rt.interjections.states[self.route.key])
+                await rt.ensure(self.route)
+                await rt.videos.auto.run(self.route)
                 self.assertEqual(3,len(self.calls))
                 wire=[c['json'] for c in self.calls]
                 self.assertIs(wire[0]['srv_send_msg'],False)
                 self.assertEqual([0,7],[wire[1]['msg_type'],wire[2]['msg_type']])
                 self.assertIn('bilibili.com/video/'+FIRST,wire[1]['content'])
                 self.assertEqual('',wire[2]['content'])
-                self.assertEqual(['m1','m1'],[wire[1]['msg_id'],wire[2]['msg_id']])
-                self.assertNotEqual(wire[1]['msg_seq'],wire[2]['msg_seq'])
+                for body in wire[1:]:
+                    self.assertTrue({'msg_id','msg_seq','event_id'}.isdisjoint(body))
                 rows=[r for r in rt.windows[self.route.key].rows if r['self']]
                 self.assertEqual(2,len(rows))
                 self.assertTrue(all(r['quote'] is None and r['source']=='video_share' for r in rows))
-                self.assertEqual(1,rt.videos.auto_states[self.route.key]['confirmed'])
+                self.assertEqual(1,rt.videos.auto.states[self.route.key]['confirmed'])
             finally:
                 await rt.close()
 
