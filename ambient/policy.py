@@ -103,7 +103,7 @@ class Policy:
                 'target_percent': (10, 75), 'raw_hours': (0, 24),
                 'interject_cooldown_seconds': (0, 3600),
                 'pack_chars': (2000, 30000), 'raw_limit': (24, 2000),
-                'interject_fresh_seconds': (30, 240),
+                'interject_fresh_seconds': (30, 3600),
                 'reply_fresh_seconds': (30, 240),
                 'reply_segment_chars': (0, 1000),
                 'reply_segment_interval_ms': (0, 3000),

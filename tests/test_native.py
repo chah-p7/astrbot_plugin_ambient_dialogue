@@ -3,16 +3,17 @@ from __future__ import annotations
 
 import ast
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import textwrap
+import time
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ambient.runtime import Runtime
@@ -24,6 +25,87 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_interjection_beyond_passive_window_ignores_exhausted_reply_slots(self):
+        self.event.message_obj.raw_message.timestamp = datetime.now(timezone.utc)-timedelta(seconds=360)
+        text = '\n\n'.join(['这把先歇会儿。', '下一把再开。', '装备先看看。', '地图也换换。', '队友缓口气。', '别急着冲。'])
+        self.ctx.llm_generate.return_value = NS(completion_text=json.dumps({'reply':True, 'text':text}))
+        self.response = lambda: {'id':'auto-'+str(len(self.calls))}
+        config = {'groups':[{'umo':self.route.umo,'capture_only':False,'interject_enabled':True}],
+                  'limits':{'interject_fresh_seconds':600,'interject_cooldown_seconds':0,'reply_segment_interval_ms':0}}
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, config)
+            try:
+                await rt.observe(self.event)
+                store = rt.stores[self.route.key]
+                for _ in range(5): store.claim_qq_part('m1')
+                await rt.interjections.tick()
+                await asyncio.gather(*list(rt.interjections.tasks.values()))
+                self.assertEqual(6, len(self.calls))
+                for call in self.calls:
+                    self.assertTrue({'msg_id','event_id','msg_seq'}.isdisjoint(call['json']))
+                    self.assertEqual(0, call['json']['msg_type'])
+                rows = [r for r in rt.windows[self.route.key].rows if r['self']]
+                self.assertEqual(text.split('\n\n'), [r['text'] for r in rows])
+                self.assertEqual(6, len({r['id'] for r in rows}))
+                self.assertTrue(all(r['quote']['id']=='m1' and r['source']=='interjection' for r in rows))
+                self.assertEqual(0, store.remaining_qq_parts('m1'))
+                self.assertEqual('confirmed', rt.interjections.states[self.route.key].outcome)
+                self.assertEqual(1, len(store.snapshot()['members']))
+            finally:
+                await rt.close()
+
+    async def test_interjection_without_native_anchor_sends_text_and_sticker_separately(self):
+        self.ctx.llm_generate.return_value = NS(completion_text='{"reply":true,"text":"这把先歇会儿。"}')
+        self.response = lambda: ({'file_info':'image-file'} if self.calls[-1]['url'].endswith('/files')
+                                 else {'id':'part-'+str(len(self.calls))})
+        config = {'groups':[{'umo':self.route.umo,'capture_only':False,'interject_enabled':True}],
+                  'limits':{'reply_segment_interval_ms':0}}
+        with tempfile.TemporaryDirectory() as tmp:
+            rt = Runtime(tmp, self.ctx, config)
+            try:
+                await rt.observe(self.event)
+                self.event.message_obj.message_id = ''
+                sticker = {'id':'sticker', 'data':b'png', 'caption':'歇会儿'}
+                rt.stickers.add_choices = Mock(return_value={'sticker':sticker})
+                rt.stickers.selected = Mock(return_value=sticker)
+                with patch('ambient.interjection.parse_sticker', return_value=('这把先歇会儿。','sticker')):
+                    await rt.interjections.run(self.route, rt.interjections.states[self.route.key])
+                upload, text, image = [c['json'] for c in self.calls]
+                self.assertIs(upload['srv_send_msg'], False)
+                self.assertEqual([0,7], [text['msg_type'], image['msg_type']])
+                self.assertEqual('', image['content'])
+                for body in (text,image):
+                    self.assertTrue({'msg_id','event_id','msg_seq'}.isdisjoint(body))
+                with rt.stores[self.route.key].connection() as db:
+                    self.assertEqual(0, db.execute('SELECT count(*) FROM qq_reply_slots').fetchone()[0])
+                self.assertEqual(2, rt.interjections.states[self.route.key].sent)
+            finally:
+                await rt.close()
+
+    async def test_interjection_permission_and_rate_rejections_back_off_without_retry(self):
+        for code, reason in ((40034105,'qq_proactive_permission_required'), (40034100,'qq_proactive_rate_limited')):
+            self.calls.clear()
+            self.ctx.llm_generate.reset_mock()
+            self.status, self.response = 400, {'code':code,'message':'PRIVATE response'}
+            config = {'groups':[{'umo':self.route.umo,'capture_only':False,'interject_enabled':True}]}
+            with tempfile.TemporaryDirectory() as tmp:
+                rt = Runtime(tmp, self.ctx, config)
+                try:
+                    await rt.observe(self.event)
+                    state = rt.interjections.states[self.route.key]
+                    await rt.interjections.run(self.route, state)
+                    self.assertEqual(1, len(self.calls))
+                    self.assertEqual(reason, state.reason)
+                    self.assertEqual('uncertain_no_retry', state.outcome)
+                    self.assertGreater(state.next_check, time.time()+3500)
+                    self.assertFalse(any(r['self'] for r in rt.windows[self.route.key].rows))
+                    await rt.observe(Event('接着聊',mid='next'))
+                    await rt.interjections.tick(now=time.time()+40)
+                    self.ctx.llm_generate.assert_awaited_once()
+                    self.assertEqual(1, len(self.calls))
+                finally:
+                    await rt.close()
+
     async def test_proactive_permission_rejection_is_reported_without_passive_retry(self):
         self.status, self.response = 400, {'code':40034105,'message':'private server detail'}
         sender = Transport(self.ctx,None,self.route,proactive=True)

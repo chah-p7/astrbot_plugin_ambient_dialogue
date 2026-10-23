@@ -18,11 +18,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "6d293d239013419429f00e2dd6fc85389c2cf3fe9e099cf8a1286119986e4b3d"
+      "sha256": "2319b9fed9f920a9925f7db8b33379f1983fae8e76e8793382ceb8e6927bb5d7"
     },
     {
       "path": "_conf_schema.json",
-      "sha256": "745742c8c1218f31625ecb70a7c4a436a4c194717af67c4fc0db3c130f868e86"
+      "sha256": "b1ca6abdad430b6fc21ee1b14cd00cac83c204ba82ec9a2813a058c8460f0129"
     },
     {
       "path": "ambient/__init__.py",
@@ -58,7 +58,7 @@
     },
     {
       "path": "ambient/interjection.py",
-      "sha256": "ff1f85eccd7873399346f428c5488f97d29d527cd1d9883fad1548ed66ed4de4"
+      "sha256": "4a80353f709b837f6bbeb07ae17368e92957317896e9ee92cfbbb570d6ed852a"
     },
     {
       "path": "ambient/learning.py",
@@ -70,7 +70,7 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "a46bf9340f3be6c8ffd283fdbe6b5092644bdcead8c314384ad52efe814ee37a"
+      "sha256": "8de4146fde1ffdbfe61313329e2afdabf4457709630451f20b58d505261d8fb7"
     },
     {
       "path": "ambient/recall.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "58435f63933748ebd0cdf23b711e9207ba3ca18f4629154abcd81e39931269cb"
+      "sha256": "f82829f0c0a4e61b03d78816553818bb0898a09ddea9211fc2a87bef0ff003d8"
     },
     {
       "path": "ambient/search.py",
@@ -150,7 +150,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "4639bbcef924829e8e106eee88468077a4008f611b9cd2365cfb07a94ed5e537"
+      "sha256": "09c5e112aca6e44ca830ca806e7d37ebf49eab845c2a46f97670c927279ff2cf"
     },
     {
       "path": "pages/stickers/app.js",
@@ -174,7 +174,7 @@
     },
     {
       "path": "tests/test_ambient.py",
-      "sha256": "0410529db6334e41f1fba687403101844a8a64b46256f49d712548de8a1b4964"
+      "sha256": "ffabef6c5d405dd547eb4ae56752bd9e7c0daba3cc5edb154492b30aff19148c"
     },
     {
       "path": "tests/test_delivery.py",
@@ -186,7 +186,7 @@
     },
     {
       "path": "tests/test_identity.py",
-      "sha256": "d95bf91e3ed3effe942e494f6122b095ef37ece8884de7b74fb80cebd3e7bb5d"
+      "sha256": "284f6d14084977e107bc1855b93b83b465f17798a0e07d0bd5c371f5ebdc8dcb"
     },
     {
       "path": "tests/test_learning.py",
@@ -194,7 +194,7 @@
     },
     {
       "path": "tests/test_native.py",
-      "sha256": "d1602c77546dde2441a69540453bfb2550dbfe6a19c09fe34071e36cd50d5f19"
+      "sha256": "08e65903c9af7d5cbdb4c7f01164853104ac77f036a00d2cdb62f27d520aa786"
     },
     {
       "path": "tests/test_recall.py",
@@ -210,7 +210,7 @@
     },
     {
       "path": "tests/test_stickers.py",
-      "sha256": "faba8afe9ccd0ce4f43aee13c28adc4b7edb4d1745cf215bb0bc8ff4606d56d7"
+      "sha256": "941daed413a06c5e67162334f6d4a5df1829c0ed8dfff0f599f9c421119669c6"
     },
     {
       "path": "tests/test_style_eval.py",
@@ -218,7 +218,7 @@
     },
     {
       "path": "tests/test_unified.py",
-      "sha256": "5bf8b8235b1c30190ba1897484200ee21a79ed4bd15953549dde447a4d04f4b7"
+      "sha256": "1eeb44fa703d261725e30267e76f010c4f7300b9774fb5ccad73738e4855588f"
     },
     {
       "path": "tests/test_video_auto.py",
@@ -230,7 +230,7 @@
     },
     {
       "path": "tests/test_video_preview.py",
-      "sha256": "533e1a2d9e193f36289cf4f61db6d5505ccffd7e686206f4ba3bde9a2d876f39"
+      "sha256": "ef4956f8467c4fa6d10b122e0bc29fc6055bda14a2054b56ac5f66e819dc08fd"
     },
     {
       "path": "tests/test_video_taste.py",
@@ -238,11 +238,11 @@
     },
     {
       "path": "tests/test_videos.py",
-      "sha256": "47ccad86732cebe7b10edf253e1911ca7a92afa4f8fd58cfffc7bc2c8dc08ab8"
+      "sha256": "d22985d20f0aad6c29f20fcb3d5c50318996ec6c1a4bd816f7f45cb069f001e3"
     },
     {
       "path": "tests/test_vision.py",
-      "sha256": "72be348c321eb6c7c93fadb219cbe228b7f60c2a4a0e54162f329a0659d00f2a"
+      "sha256": "02b258a068e59a1ee6ec52cabbeca490a2e87a660cb2e52fa49bf288771027cc"
     },
     {
       "path": "tools/build_schema.py",

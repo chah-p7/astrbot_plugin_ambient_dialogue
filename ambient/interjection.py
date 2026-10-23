@@ -29,6 +29,7 @@ class Participation:
     checks: int = 0
     sent: int = 0
     outcome: str = 'waiting_for_messages'
+    reason: str = ''
 
 
 class Interjections:
@@ -107,9 +108,12 @@ class Interjections:
         rt, p = self.runtime, self.runtime.policy(route)
         settings = stable_id(rt.config)
         confirmed_parts = 0
+        state.reason = ''
         try:
             search_settings = settings_id(rt.context, event)
-            transport = Transport(rt.context, event, route)
+            # The observed event supplies conversation/tool context, never a
+            # passive-reply credential or a per-message send allowance.
+            transport = Transport(rt.context, None, route, proactive=True)
             provider, persona, identity = await self.identity(route, event)
             store, window = await rt.ensure(route)
             await rt.vision.wait(route, current)
@@ -199,9 +203,7 @@ class Interjections:
                 if video and not claimed:
                     rt.videos.claim(route, video)
                 claimed = True
-                sequence = store.claim_qq_part(current['id']) if route.adapter == 'qq_official' else None
                 state.outcome = 'sending'
-                return sequence
 
             async def record_part(part, receipt):
                 nonlocal confirmed_parts
@@ -213,8 +215,7 @@ class Interjections:
             state.outcome = 'preparing_send'
             async with rt.send_locks.setdefault(route.key, asyncio.Lock()):
                 await send_reply_parts(transport, text, p, before_send, record_part,
-                    sticker=sticker, card=card,
-                    max_parts=store.remaining_qq_parts(current['id']) if route.adapter == 'qq_official' else None)
+                    sticker=sticker, card=card)
             state.outcome = 'confirmed'
             rt.delivery_audit(route, current, 'interjection', confirmed_parts)
             state.suppressed_until = time.time()+p.interject_cooldown_seconds
@@ -224,7 +225,10 @@ class Interjections:
         except Exception as exc:
             # Never log raw chats, drafts, tokens or adapter exception bodies.
             from .runtime import error_code
-            state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else error_code(exc)
+            state.reason = error_code(exc)
+            state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else state.reason
+            if state.reason in {'qq_proactive_permission_required', 'qq_proactive_rate_limited'}:
+                state.next_check = max(state.next_check, time.time()+3600)
             rt.errors += 1
         finally:
             # A real reply is interaction; merely considering/observing a

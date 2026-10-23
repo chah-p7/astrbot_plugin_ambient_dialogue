@@ -76,7 +76,7 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         state=self.rt.interjections.states[self.route.key]
         before=(await self.pack(state.current))['visual_context']
         self.ctx.llm_generate.return_value=NS(completion_text='{"reply":false,"text":""}')
-        with patch('ambient.interjection.Transport',lambda *args:NS(check=lambda:None)):
+        with patch('ambient.interjection.Transport',lambda *args,**kwargs:NS(check=lambda:None)):
             await self.rt.interjections.run(self.route,state)
         draft=json.loads(self.ctx.llm_generate.call_args.kwargs['prompt'])['ambient_data']
         self.assertEqual(before,draft['visual_context'])

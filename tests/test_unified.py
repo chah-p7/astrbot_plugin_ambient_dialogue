@@ -32,7 +32,7 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.sent, self.error, self.late_change = [], None, None
         owner = self
         class Sender:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def send(self, text, guard):
                 if owner.late_change:

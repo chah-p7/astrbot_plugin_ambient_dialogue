@@ -204,7 +204,7 @@ class VideoCardFlowTests(unittest.IsolatedAsyncioTestCase):
         self.wires = []
         owner = self
         class Sender:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def send(self, text, guard, *, ark=None):
                 if owner.late_change:

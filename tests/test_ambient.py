@@ -194,7 +194,7 @@ class AmbientTests(unittest.IsolatedAsyncioTestCase):
     async def fake_transport(self, action):
         rt = self.rt
         class Fake:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def send(self, text, guard):
                 await action()
@@ -248,7 +248,7 @@ class AmbientTests(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_send_survives_restart_and_no_retry(self):
         await self.rt.observe(self.event)
         class Unknown:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def send(self, text, guard):
                 await guard()

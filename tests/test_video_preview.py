@@ -47,7 +47,7 @@ class PreviewFlowTests(unittest.IsolatedAsyncioTestCase):
         owner = self
 
         class Sender:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def prepare_image(self, data):
                 owner.uploads.append(data)

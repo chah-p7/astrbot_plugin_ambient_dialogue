@@ -32,6 +32,7 @@
           "interject_enabled": {
             "type": "bool",
             "description": "自然插话",
+            "hint": "根据近期群聊决定是否插话，通过主动消息发送；QQ群需允许机器人主动发言，不依赖被动回复窗口。",
             "default": false
           },
           "video_sharing_enabled": {
@@ -267,7 +268,8 @@
               },
               "interject_fresh_seconds": {
                 "type": "int",
-                "description": "插话消息新鲜期（秒）",
+                "description": "插话上下文新鲜期（秒）",
+                "hint": "默认 180，范围 30～3600；控制接话时效，不是 QQ 被动回复窗口。",
                 "default": 180
               },
               "interject_timeout_seconds": {
@@ -604,7 +606,8 @@
       },
       "interject_fresh_seconds": {
         "type": "int",
-        "description": "插话消息新鲜期（秒）",
+        "description": "插话上下文新鲜期（秒）",
+        "hint": "默认 180，范围 30～3600；控制接话时效，不是 QQ 被动回复窗口。",
         "default": 180
       },
       "interject_timeout_seconds": {

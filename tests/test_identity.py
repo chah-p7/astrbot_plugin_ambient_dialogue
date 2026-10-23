@@ -129,7 +129,7 @@ class IdentityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_silent_interjection_does_not_profile_but_delivered_one_does(self):
         class Sender:
-            def __init__(self,*args): pass
+            def __init__(self,*args,**kwargs): pass
             def check(self): pass
             async def send(self,text,guard): await guard(); return 'receipt'
         with patch('ambient.interjection.Transport',Sender):

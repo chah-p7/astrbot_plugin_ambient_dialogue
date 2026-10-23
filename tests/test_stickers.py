@@ -112,7 +112,7 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_both_reply_paths_share_catalog_and_native_image_records(self):
         sent, uploads = [], []
         class Sender:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def prepare_image(self, data): uploads.append(data); return {'file_info': 'test'}
             async def send(self, text, guard, *, media=None):
@@ -166,7 +166,7 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_text_and_sticker_are_separate_on_both_reply_paths(self):
         sent = []
         class Sender:
-            def __init__(self, *args): pass
+            def __init__(self, *args, **kwargs): pass
             def check(self): pass
             async def prepare_image(self, data): return {'file_info': 'test'}
             async def send(self, text, guard, *, media=None):

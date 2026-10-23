@@ -649,7 +649,7 @@ class Runtime:
                     'used_bytes': self.stores[key].size(),
                     'reply': self.replies.get(key, {}),
                     'interjection': {k: getattr(self.interjections.states.get(key), k, 0)
-                        for k in ('observed', 'checks', 'sent', 'outcome')}} for key in self.routes}}
+                        for k in ('observed', 'checks', 'sent', 'outcome', 'reason', 'next_check')}} for key in self.routes}}
 
     async def close(self):
         self.closed = True
