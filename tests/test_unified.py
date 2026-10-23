@@ -64,6 +64,18 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.ctx.llm_generate.return_value = NS(completion_text=json.dumps({'reply': True, 'text': text}))
         await self.rt.interjections.run(self.route, state)
 
+    async def test_interjection_request_explicitly_asks_for_a_decision_on_the_whole_turn(self):
+        await self.rt.observe(Event('模型甲今天挺聪明',mid='turn-first'))
+        await self.rt.observe(Event('模型乙最近脑子不行',mid='turn-second'))
+        await self.interject(Event('[表情:笑]',mid='turn-reaction'),'模型乙最近退步了？')
+        prompt = json.loads(self.ctx.llm_generate.call_args.kwargs['prompt'])
+        self.assertIn('JSON',prompt['task'])
+        self.assertIn('旁听',prompt['task'])
+        self.assertEqual(3,len(prompt['ambient_data']['current_turn']))
+        self.assertTrue(prompt['ambient_data']['current_message']['reaction_only'])
+        self.assertEqual({'current_model_config':'ustc/free'},prompt['ambient_data']['bot_identity'])
+        self.ctx.llm_generate.assert_awaited_once()
+
     async def test_two_paths_read_each_others_confirmed_replies(self):
         await self.interject(Event('刚输了一把', mid='game'), '这把先歇会儿吧。')
         normal = directed()
@@ -72,6 +84,7 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         pack = json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
         self.assertEqual('这把先歇会儿吧。', next(r['text'] for r in pack['focus_context'] if r['speaker']=='bot'))
         self.assertEqual('你刚才说了什么', pack['current_message']['text'])
+        self.assertEqual({'current_model_config':'ustc/free'},pack['bot_identity'])
         await self.rt.response(normal, NS(completion_text='我说先休息一下。'))
         await normal.send(NS(chain=[Plain('我说先休息一下。')]))
         await self.interject(Event('现在赢回来了', mid='won'), '那就收工，别把赢的再送回去。')

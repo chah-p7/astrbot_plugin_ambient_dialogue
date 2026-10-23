@@ -25,6 +25,49 @@ class GroundingTests(unittest.TestCase):
     def pack(self, rows, current, **limits):
         return build_pack(Window(replace(Policy(), **limits), rows), {}, current, now=self.now)
 
+    def test_comparison_and_trailing_reaction_keep_the_speakers_complete_turn(self):
+        first = self.row('模型甲今天挺聪明', 'first', 'A', 31)
+        second = self.row('模型乙最近脑子不行', 'second', 'A', 2)
+        current = self.row('[表情:太好笑]', 'reaction', 'A')
+        pack = self.pack([first, second, current], current)
+        self.assertEqual([first['text'], second['text'], current['text']], [r['text'] for r in pack['current_turn']])
+        self.assertEqual([31,2,0], [r['seconds_ago'] for r in pack['current_turn']])
+        self.assertTrue(pack['current_message']['reaction_only'])
+        self.assertEqual(1, len({r['speaker'] for r in pack['current_turn']}))
+        self.assertEqual([], pack['focus_context'])
+
+    def test_turn_stops_at_another_speaker_quote_new_addressee_and_explicit_topic_change(self):
+        first = self.row('模型甲今天挺聪明', 'first', 'A', 15)
+        other = self.row('外卖到了', 'other', 'B', 5)
+        for current in (self.row('[表情:笑]', 'r', 'A'),
+                        self.row('换个话题，午饭吃什么', 'new', 'A'),
+                        self.row('<@B> 午饭吃什么', 'target', 'A'),
+                        self.row('这句说谁', 'quote', 'A', quote={'id':'other','sender':'B','text':other['text']})):
+            rows = [first,other,current] if current['id']=='r' else [first,current]
+            self.assertNotIn('current_turn', self.pack(rows,current))
+
+    def test_reaction_retains_an_explicit_target_without_treating_it_as_a_new_question(self):
+        first = self.row('<@B> 你这次跑通了吗', 'first', 'A', 2)
+        current = self.row('[表情:笑]', 'reaction', 'A')
+        self.assertEqual((['B'],'recent_same_sender_reaction'), addressing(current,[first,current]))
+        pack = self.pack([first,current],current)
+        self.assertNotEqual(['bot'],pack['current_message']['addressing']['targets'])
+
+    def test_turn_is_bounded_and_never_reads_later_messages(self):
+        rows = [self.row('这一条短句'+str(i), str(i), 'A', 50-i*10) for i in range(6)]
+        current = rows[-1]
+        later = self.row('后来的结果不该看到', 'later', 'A', -1)
+        pack = self.pack([*rows,later],current,pack_chars=2000)
+        self.assertLessEqual(len(compact(pack)),2000)
+        self.assertLessEqual(len(pack.get('current_turn',[])),4)
+        self.assertNotIn('后来的结果',compact(pack))
+        self.assertNotIn(rows[0]['text'],[r['text'] for r in pack.get('current_turn',[])])
+
+    def test_long_reaction_burst_does_not_recurse_or_inherit_an_old_target(self):
+        first = self.row('<@B> 你跑通了吗', 'first', 'A', 1501)
+        reactions = [self.row('[表情:笑]', str(i), 'A', 1500-i) for i in range(1501)]
+        self.assertEqual(([], 'unspecified'), addressing(reactions[-1],[first,*reactions]))
+
     def test_inline_mention_keeps_its_subject_and_direct_reply_targets_bot(self):
         target = self.row('这课还得上吗', 'seed', 'PRIVATE_TARGET', 10)
         for native in (False, True):

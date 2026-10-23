@@ -255,7 +255,8 @@ class Runtime:
         if self.closed or not self.owns(route) or not any(r['id'] == row['id'] for r in window.rows):
             self.block(event, route, row, 'route_or_settings_changed')
             return None
-        pack = build_pack(window, snap, row, now=time.time(), memory_status=status)
+        provider = await self.context.get_current_chat_provider_id(route.umo)
+        pack = build_pack(window, snap, row, now=time.time(), memory_status=status, provider_label=provider)
         event.set_extra('ambient_sticker_choices', self.stickers.add_choices(route, pack))
         event.set_extra('ambient_video_choices', self.videos.add_choices(route, pack))
         return pack

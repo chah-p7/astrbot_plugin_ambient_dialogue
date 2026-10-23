@@ -9,7 +9,7 @@ import statistics
 import time
 
 from .policy import display_name, normalized, stable_id
-from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_topic,
+from .learning import (MENTION, MEDIA_ONLY, TOPIC_CHANGE, addressing, continues_topic, current_turn,
                        mentions as message_mentions, plain_text, quote_source,
                        reaction_only, reply_feedback, same_speaker_context, short_answer, style_examples)
 from .recall import recall_rows
@@ -325,7 +325,7 @@ def model_text(text, accounts):
     return normalized(MENTION.sub(lambda m: '@'+accounts.get(m[1], 'bot' if m[1] == 'bot' else 'unknown'), text))
 
 
-def build_pack(window, snapshot, current, *, now, memory_status='none'):
+def build_pack(window, snapshot, current, *, now, memory_status='none', provider_label=''):
     """Raw evidence, bounded locally. Model never sees stable platform IDs."""
     p = window.policy
     window.trim(now)
@@ -361,6 +361,8 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                 result['automated'] = True
         if r.get('attention_only'):
             result['attention_only'] = True
+        if reaction_only(r['text']):
+            result['reaction_only'] = True
         if MEDIA_ONLY.fullmatch(plain_text(r['text'])):
             result['media_content_unavailable'] = not (any(s['id'] == r['id'] for s in images) and
                 any(n['state'] == 'ready' for n in window.image_notes.get(r['id'], [])))
@@ -448,6 +450,9 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
                      min(1600, max(0, p.recent_chars-len(compact(focus)))))
     evidence_ids = focus_ids | {r['ref'] for r in recall}
     lookup['matched_messages'] = len(recall) + sum(ids[r['id']] in focus_ids for r, _ in recalled)
+    turn = current_turn(rows, current)
+    turn_rows = bounded([render(r) for r in reversed(turn)], min(p.recent_chars, p.pack_chars//3)) if len(turn)>1 else []
+    turn_rows.reverse()
     context_rows = bounded([render(r) for r in reversed(recent) if ids[r['id']] not in evidence_ids],
                            max(0, p.recent_chars-len(compact(focus))-len(compact(recall))))
     context_rows.reverse()
@@ -471,6 +476,10 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
             'memory_snapshot': memory_rows, 'style_samples': style_rows, 'reply_feedback': feedback_rows,
             'rhythm_stats': stats if len(compact(stats)) <= p.stats_chars else {},
             'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
+    if turn_rows:
+        pack['current_turn'] = turn_rows
+    if isinstance(provider_label, str) and provider_label:
+        pack['bot_identity'] = {'current_model_config': normalized(provider_label)[:96]}
     visual = [{'source_ref': ids.get(r['id'], 'current'), 'sender': aliases[r['member']], 'at': int(r['at']),
                **{k:v for k,v in note.items() if k != 'digest'}} for r in images for note in window.image_notes.get(r['id'], [])]
     if images:
@@ -495,11 +504,11 @@ def build_pack(window, snapshot, current, *, now, memory_status='none'):
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context', 'visual_context'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context', 'visual_context', 'current_turn'):
         if key not in pack:
             continue
         while pack[key] and len(compact(pack)) > p.pack_chars:
-            pack[key].pop(0 if key == 'recent_context' else -1)
+            pack[key].pop(0 if key in {'recent_context','current_turn'} else -1)
             pack['omitted_count'] += 1
             if key == 'visual_context':
                 pack['visual_context_incomplete'] = True

@@ -88,6 +88,27 @@ def same_speaker_context(rows, current):
     return selected
 
 
+def current_turn(rows, current):
+    """Adjacent messages from this speaker, without asserting one shared topic."""
+    if not current:
+        return []
+    selected = [current]
+    before = rows[:next((i for i, r in enumerate(rows) if r['id'] == current['id']), len(rows))]
+    for row in reversed(before):
+        follow = selected[-1]
+        if (row['sender'] != current['sender'] or row.get('self') or row.get('command')
+                or not 0 <= follow['at']-row['at'] <= 30 or current['at']-row['at'] > 90
+                or follow.get('quote') or TOPIC_CHANGE.search(plain_text(follow['text']))):
+            break
+        targets, previous_targets = mentions(follow), mentions(row)
+        if targets and targets != previous_targets:
+            break
+        selected.append(row)
+        if len(selected) == 4:
+            break
+    return list(reversed(selected))
+
+
 @dataclass(frozen=True)
 class StyleExample:
     row: dict
@@ -121,6 +142,12 @@ def addressing(row, rows):
     # An unresolved explicit quote must not inherit an unrelated older target.
     if row.get('quote'):
         return [], 'unspecified'
+    turn = current_turn(rows, row) if reaction_only(row['text']) else []
+    preceding = next((r for r in reversed(turn[:-1]) if not reaction_only(r['text'])), None)
+    if preceding:
+        targets, _ = addressing(preceding, rows)
+        if targets:
+            return targets, 'recent_same_sender_reaction'
     for previous in same_speaker_context(rows, row):
         if previous.get('directed'):
             return ['bot'], 'recent_same_sender_directed'

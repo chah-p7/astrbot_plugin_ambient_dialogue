@@ -88,7 +88,7 @@ class AutoShares:
             policy = rt.policy(route)
             snap = await asyncio.to_thread(store.snapshot)
             incoming = tuple(r['id'] for r in window.rows if not r['self'])
-            pack = build_pack(window, snap, None, now=time.time())
+            pack = build_pack(window, snap, None, now=time.time(), provider_label=provider)
             offered = videos.add_choices(route, pack)
             if not offered:
                 self.result(route, 'no_candidates')

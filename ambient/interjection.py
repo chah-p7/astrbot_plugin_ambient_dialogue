@@ -16,6 +16,16 @@ from .search import generate, settings_id
 from .videos import VIDEO_RULE, parse_video, share_text
 
 
+INTERJECTION_TASK = (
+    '这是一次群聊插话决策。先读 current_turn 的连续原话，再结合当前消息、引用和前后文，'
+    '分清发话人、接话对象与被评价的对象。表情只是可能的语气补充，不要单独点评表情或替人编心情。'
+    '对方紧接你上一句表达不满时，先核对自己是否误解了他，不把对自己的纠正顺手转成对第三方的嘲讽。'
+    '直接接正在谈的内容，不旁白式总结谁刚夸谁、又骂谁；没核实的表现不替对方证实，也不编出一贯如此的历史。'
+    '有自然且接得准的回应才发言，否则旁听；不要为了插话硬找一个损人的角度。'
+    '只输出一个 JSON 对象：{"reply":true,"text":"实际要说的短句"}，'
+    '或 {"reply":false,"text":""}。不输出解释、代码围栏或 JSON 之外的正文。')
+
+
 @dataclass
 class Participation:
     generation: int = 0
@@ -132,7 +142,7 @@ class Interjections:
             if rt.busy(route) or time.time()-current['at'] > p.interject_fresh_seconds:
                 state.outcome = 'normal_reply_pending_or_stale'
                 return
-            pack = build_pack(window, snap, current, now=time.time())
+            pack = build_pack(window, snap, current, now=time.time(), provider_label=provider)
             offered_stickers = rt.stickers.add_choices(route, pack)
             offered_videos = rt.videos.add_choices(route, pack)
 
@@ -154,7 +164,7 @@ class Interjections:
                 '当前图片附有明确看图问题且没有指向其他成员时，优先结合 visual_context 回答；纯图片分享或表情不必每张点评。'
                 '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
                 '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
-                prompt=compact({'ambient_data': pack}), guard=draft_guard,
+                prompt=compact({'ambient_data': pack, 'task': INTERJECTION_TASK}), guard=draft_guard,
                 expected_settings=search_settings, max_tokens=600), p.interject_timeout_seconds)
             raw = str(getattr(response, 'completion_text', '')).strip()
             if raw.startswith('```') and raw.endswith('```'):
