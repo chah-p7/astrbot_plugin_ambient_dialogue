@@ -13,10 +13,21 @@ from .learning import plain_text
 from .stickers import MAX_DOWNLOAD, MAX_PIXELS, fetch_image, image_sources
 
 
-VISION_RULES = '''你为群聊助手提供图片观察笔记，不直接回复群友。请按证据来源分别记录，只返回 JSON：
-{"kind":"photo/screenshot/meme/document/other","description":"直接可见的画面事实，最多180字",
+def failure_reason(exc):
+    # Keep known local error codes useful without exposing URLs or provider bodies.
+    local = {'image_size', 'image_format', 'image_dimensions', 'image_data_invalid',
+             'image_local_source_unavailable', 'image_file_missing', 'image_url_not_allowed',
+             'image_host_not_allowed', 'image_private_address', 'image_download_unavailable',
+             'image_source_missing', 'vision_provider_missing', 'visual_source_changed',
+             'invalid_visual_result', 'empty_visual_result'}
+    return str(exc) if isinstance(exc, ValueError) and str(exc) in local else type(exc).__name__
+
+
+VISION_RULES = '''你为群聊助手提供图片观察笔记，不直接回复群友。请按证据来源分别记录，只返回一个 JSON 对象；下例仅说明字段结构，不代表图片内容：
+{"kind":"other","description":"直接可见的画面事实，最多180字",
 "text":"能辨认的关键原文，最多350字","interpretation":"有依据的含义或梗点；推测须明确标出，最多160字；不需要则为空",
 "uncertain":"无法确认的细节、出处、原因或采样遗漏，最多100字；没有则为空"}。
+kind 必须且只能选择 photo、screenshot、meme、document、other 中的一个原样字符串；混合类型选最贴近的一种，不拼接类型或另造名称。其余四个字段必须是字符串，没有内容写空字符串，不省略、不写 null、数组或对象。输出不加代码围栏或额外说明。
 description 只写颜色、形状、物体位置、动作等可见内容；不要把物质成分、形成原因、真实身份或人物经历塞进画面事实。
 text 按原图逐字读取，保留名字与原话的对应关系；模糊或变形字标[看不清]，不按常识补全。黑白图不猜颜色。
 interpretation 只概括图文之间的反差与可能的表达意图，不增加图片以外的物质、成因、背景或出处。未知成分与原因只写到 uncertain，不列举猜测答案。
@@ -201,10 +212,12 @@ class Vision:
         payload = cached[1] if cached else await asyncio.to_thread(
             self.rt.stores[route.key].cached_image, digest, model, now=now)
         if payload is None:
-            extra = {'extra_body': {'thinking': {'type': 'disabled'}}, 'response_format': {'type': 'json_object'}} if 'deepseek' in provider.lower() else {}
+            # Use wire fields forwarded by AstrBot; nested extra_body kwargs may
+            # be ignored by the host. Observation needs less sampling variance.
+            extra = {'temperature': 0.2, 'response_format': {'type': 'json_object'}} if 'deepseek' in provider.lower() else {}
             response = await self.rt.context.llm_generate(chat_provider_id=provider, system_prompt=VISION_RULES,
                 prompt='请识别这张图片。附图说明：'+json.dumps(layout,ensure_ascii=False), image_urls=urls, contexts=[], tools=None,
-                max_tokens=1000, request_max_retries=0, fallback_chat_provider_ids=[], **extra)
+                max_tokens=1600, request_max_retries=0, fallback_chat_provider_ids=[], **extra)
             payload = {**parse_observation(response.completion_text), **layout}
             if not check():
                 raise ValueError('visual_source_changed')
@@ -219,7 +232,7 @@ class Vision:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self.statuses[route.key] = {'outcome': 'failed', 'reason': type(exc).__name__}
+            self.statuses[route.key] = {'outcome': 'failed', 'reason': failure_reason(exc)}
         finally:
             for note in self.rt.windows[route.key].image_notes.get(row['id'], []):
                 if note['state'] == 'pending':
@@ -246,7 +259,7 @@ class Vision:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                payload = {'reason': type(exc).__name__}
+                payload = {'reason': failure_reason(exc)}
             if not self.valid(route, row, signature):
                 break
             notes = self.rt.windows[route.key].image_notes.get(row['id'], [])

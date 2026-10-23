@@ -246,10 +246,29 @@ class StickerAsyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_network_and_local_sources_are_restricted(self):
         for source in ('http://gchat.qpic.cn/x','https://127.0.0.1/x','https://qq.com/x',
-                       'https://user:pass@gchat.qpic.cn/x','file:///etc/passwd'):
+                       'https://user:pass@gchat.qpic.cn/x','file:///etc/passwd',
+                       'https://qq.ugcimg.cn.attacker.test/x','https://untrusted.ugcimg.cn/x',
+                       'http://qq.ugcimg.cn/x','https://qq.ugcimg.cn:8443/x'):
             with self.assertRaises(ValueError): await fetch_image(source)
         path=Path(self.tmp.name)/'test.png'; path.write_bytes(png())
         self.assertEqual(png(),await fetch_image(str(path),(self.tmp.name,)))
+
+    async def test_official_ugc_image_download_uses_existing_size_and_redirect_rules(self):
+        data=png();calls=[]
+        async def chunks(size):yield data
+        class Response:
+            status=200
+            content_length=len(data)
+            content=NS(iter_chunked=chunks)
+            async def __aenter__(self):return self
+            async def __aexit__(self,*args):pass
+        class Session(Response):
+            def __init__(self,**kwargs):pass
+            def get(self,url,**kwargs):
+                calls.append((url,kwargs));return Response()
+        with patch('aiohttp.ClientSession',Session),patch('aiohttp.TCPConnector'):
+            self.assertEqual(data,await fetch_image('https://qq.ugcimg.cn/real-attachment'))
+        self.assertEqual([('https://qq.ugcimg.cn/real-attachment',{'allow_redirects':False})],calls)
 
     async def test_archived_embedded_images_and_redacted_failure_counts(self):
         source='data:image/png;base64,'+base64.b64encode(png('blue')).decode()

@@ -17,7 +17,7 @@ from ambient.context import build_pack, compact, route_for, visual_rows
 from ambient.runtime import Runtime
 from ambient.policy import reply_rejection
 from ambient.store import Store
-from ambient.vision import parse_observation, prepare_image
+from ambient.vision import failure_reason, parse_observation, prepare_image
 
 
 Image = type('Image', (), {})
@@ -92,6 +92,14 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         pack=await self.pack(self.rt.interjections.states[self.route.key].current)
         notes=pack['visual_context']
         self.assertEqual([(1,'unavailable'),(2,'ready')],[(n['number'],n['state']) for n in notes])
+
+    async def test_download_failure_retains_safe_reason_without_source_or_provider_body(self):
+        with patch('ambient.vision.fetch_image',AsyncMock(side_effect=ValueError('image_host_not_allowed'))):
+            await self.rt.observe(self.event());await self.complete()
+        pack=await self.pack(self.rt.interjections.states[self.route.key].current)
+        self.assertEqual('image_host_not_allowed',pack['visual_context'][0]['reason'])
+        self.assertEqual('ValueError',failure_reason(ValueError('private https://host/?secret=hidden')))
+        self.assertEqual('TimeoutError',failure_reason(TimeoutError('private')))
 
     async def test_duplicate_concurrent_images_share_one_read_but_keep_senders(self):
         started,release=asyncio.Event(),asyncio.Event()

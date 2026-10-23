@@ -264,7 +264,7 @@ async def fetch_image(source, local_roots=()):
     if parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443):
         raise ValueError('image_url_not_allowed')
     hostname = (parsed.hostname or '').lower()
-    if not any(hostname == h or hostname.endswith('.'+h)
+    if hostname != 'qq.ugcimg.cn' and not any(hostname == h or hostname.endswith('.'+h)
                for h in ('qpic.cn', 'multimedia.nt.qq.com', 'multimedia.nt.qq.com.cn')):
         raise ValueError('image_host_not_allowed')
     import aiohttp

@@ -36,6 +36,94 @@ class GroundingTests(unittest.TestCase):
         self.assertEqual(1, len({r['speaker'] for r in pack['current_turn']}))
         self.assertEqual([], pack['focus_context'])
 
+    def test_self_quote_keeps_subject_evidence_without_self_addressee(self):
+        earlier = self.row('模型甲今天挺聪明', 'earlier', 'A', 20)
+        current = self.row('这句话被模型乙看到了', 'current', 'A',
+                           quote={'id':'earlier','sender':'A','text':earlier['text']})
+        pack = self.pack([earlier,current],current)
+        self.assertEqual('direct_quote', pack['focus_context'][0]['relevance'])
+        self.assertNotIn('addressing', pack['current_message'])
+        self.assertEqual('not_addressed_explicitly', pack['interaction']['bot_role'])
+
+    def test_multiple_direct_recipients_survive_bot_wake_flag(self):
+        current = self.row('<@bot> <@OTHER_BOT> 你俩怎么意见不一样', 'current', 'A', 2, directed=True)
+        pack = self.pack([current],current)
+        targets = pack['current_message']['addressing']['targets']
+        self.assertEqual(2,len(targets))
+        self.assertIn('bot',targets)
+        self.assertEqual('addressee',pack['interaction']['bot_role'])
+        follow = self.row('那你们再看看', 'follow', 'A')
+        pack = self.pack([current,follow],follow)
+        self.assertEqual(targets,pack['current_message']['addressing']['targets'])
+        self.assertEqual('possible_addressee',pack['interaction']['bot_role'])
+
+    def test_backend_mentions_alone_do_not_establish_bot_as_addressee(self):
+        current = self.row('模型甲的接口今天能用了', 'current', 'A')
+        pack = build_pack(Window(Policy(),[current]),{},current,now=self.now,provider_label='平台/模型甲')
+        self.assertEqual('not_addressed_explicitly',pack['interaction']['bot_role'])
+        self.assertEqual('bot',pack['bot_identity']['speaker'])
+        self.assertNotIn('backend_model_config',pack['bot_identity'])
+        self.assertNotIn('addressing',pack['current_message'])
+        other = self.row('<@B> 你的接口能用吗', 'other', 'A')
+        self.assertEqual('other_addressees',self.pack([other],other)['interaction']['bot_role'])
+        direct = self.row('你刚才答错了', 'direct', 'A',directed=True)
+        self.assertEqual('addressee',self.pack([direct],direct)['interaction']['bot_role'])
+
+    def test_backend_context_requires_direct_address_or_adjacent_delivered_reply(self):
+        initial=self.row('刚才你理解错了', 'initial', 'A', 20)
+        reply=self.row('我再看一下', 'reply', '12345', 10,source='reply',
+                       quote={'id':'initial','sender':'A','text':initial['text']})
+        current=self.row('这模型还是没理解', 'current', 'A')
+        def pack(rows):return build_pack(Window(Policy(),rows),{},current,now=self.now,provider_label='平台/模型甲')
+        data=pack([initial,reply,current])
+        self.assertEqual({'bot_role':'possible_addressee','basis':'adjacent_delivered_reply'},data['interaction'])
+        self.assertIn('backend_model_config',data['bot_identity'])
+        self.assertEqual('m2',data['bot_identity']['preceding_reply_ref'])
+        other=self.row('我在排查自己的接口', 'other', 'B', 5)
+        self.assertNotIn('backend_model_config',pack([initial,reply,other,current])['bot_identity'])
+        for prior in ({**reply,'source':'video_share'}, {**reply,'quote':{'sender':'B'}}):
+            self.assertNotIn('backend_model_config',pack([initial,prior,current])['bot_identity'])
+
+    def test_adjacent_reply_is_only_a_hint_and_cannot_override_new_target(self):
+        first=self.row('模型甲和模型乙表现不一样', 'first', 'A', 40)
+        reply=self.row('你被自己气笑了', 'reply', '12345', 25,source='interjection',
+                       quote={'id':'first','sender':'A','text':first['text']})
+        for current in (self.row('<@B> 你来看看', 'current', 'A'),
+                        self.row('换个话题，今天吃什么', 'current', 'A'),
+                        self.row('这模型还是不行', 'current', 'C')):
+            pack=self.pack([first,reply,current],current)
+            self.assertNotEqual('adjacent_delivered_reply',pack['interaction']['basis'])
+            self.assertNotIn('current_corrections',pack['interaction'])
+        current=self.row('这模型还是不行', 'current', 'A')
+        pack=self.pack([first,reply,current],current)
+        self.assertEqual('possible_addressee',pack['interaction']['bot_role'])
+        self.assertNotIn('current_corrections',pack['interaction'])
+
+    def test_adjacent_exchange_preserves_what_the_bot_actually_answered(self):
+        first=self.row('模型甲挺好用', 'first', 'A', 55)
+        second=self.row('模型乙最近不太行', 'second', 'A', 30)
+        reaction=self.row('[表情:笑]', 'reaction', 'A', 28)
+        reply=self.row('你被自己气笑了', 'reply', '12345', 15,source='interjection',
+                       quote={'id':'reaction','sender':'A','text':reaction['text']})
+        current=self.row('看来这个模型也没懂', 'current', 'A')
+        future=self.row('后来澄清的答案', 'future', 'A', -1)
+        pack=self.pack([first,second,reaction,reply,current,future],current)
+        self.assertEqual([r['text'] for r in [first,second,reaction,reply]],
+                         [r['text'] for r in pack['recent_exchange']])
+        self.assertEqual(['u1','u1','u1','bot'],[r['speaker'] for r in pack['recent_exchange']])
+        self.assertNotIn('后来澄清',compact(pack))
+        self.assertNotIn('current_corrections',pack['interaction'])
+        small=self.pack([first,second,reaction,reply,current],current,pack_chars=2000)
+        self.assertLessEqual(len(compact(small)),2000)
+
+    def test_current_correction_points_to_the_mistaken_reply_without_editing_it(self):
+        reply=self.row('我来管这个', 'reply', '12345', 10,source='interjection')
+        current=self.row('没和你说', 'current', 'A',directed=True,
+                         quote={'id':'reply','sender':'12345','text':reply['text']})
+        pack=self.pack([reply,current],current)
+        self.assertEqual([{'reply_ref':'m1','kind':'wrong_addressee'}],pack['interaction']['current_corrections'])
+        self.assertEqual('我来管这个',pack['focus_context'][0]['text'])
+
     def test_turn_stops_at_another_speaker_quote_new_addressee_and_explicit_topic_change(self):
         first = self.row('模型甲今天挺聪明', 'first', 'A', 15)
         other = self.row('外卖到了', 'other', 'B', 5)

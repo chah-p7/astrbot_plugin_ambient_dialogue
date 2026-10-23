@@ -22,6 +22,33 @@ def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
+def reply_task(pack):
+    interaction = pack.get('interaction', {})
+    role = interaction.get('bot_role')
+    task = ''
+    if role == 'not_addressed_explicitly':
+        task = ('当前没有明确向你搭话的证据，你先以旁听者身份读这段群聊。'
+                '当前消息是群内发言，不因为交给你处理就成了对你的提问；其中的“你”需要从群友的前话找对象。'
+                '可以评论明确的内容，不替被问的人表态或答应邀约。若上下文明说在谈你，才回应你实际说过或做过的事。')
+    elif role == 'other_addressees':
+        task = '当前的称呼或引用指向其他成员，你是旁听者，不替那个成员回答、选择、答应或拒绝。'
+    task += ('先确定当前句是问话、陈述、转述还是纠正，并分清接话对象与谈论对象。'
+            '省略的称呼沿前话理解；对方朝另一个对象说话时，不先假定在叫你、再否认自己是那个人。'
+            '只接有原话依据的内容；旁听时不认领别人的任务、服务或经历。'
+            '你没有现实身体，不能参与群友的吃饭、出行等现实活动，也不把邀约改成自己的安排。'
+            '对方否定你参与其中时，收回误会，不换一个理由继续演自己参与其中。'
+            '对方取消或纠正旧要求时，先处理眼前要求；历史记录不全不能拿来断言自己从没说过或做过。')
+    if interaction.get('basis') == 'adjacent_delivered_reply':
+        task += ('先读 recent_exchange：它按先后列出此人给你的原话和你刚才实际发出的回复。'
+                 '他现在紧接着说了 current_message。先把你那句和他之前的原话对照，'
+                 '判断当前句是否在评价你刚才的理解；若是，回应具体误解，不当作他又在评价一个无关对象。'
+                 '相邻只是线索，若他明确换了对象或话题，仍跟随原文。')
+    if interaction.get('current_corrections'):
+        task += ('当前原话正在纠正你：以它为准，撤回旧回复里无依据的身份、职责、任务或关系，'
+                 '不沿用旧回复继续演，也不拿它反驳群友。')
+    return task+'直接给出自然的回复，不展示分析过程。'
+
+
 def participants(snapshot, people, current, focused=()):
     """Resolve only stable accounts; name search returns candidates, never merges."""
     members = {r['id']: r for r in snapshot.get('members', [])}
@@ -478,8 +505,36 @@ def build_pack(window, snapshot, current, *, now, memory_status='none', provider
             'omitted_count': sum(ids[r['id']] not in evidence_ids for r in recent)-len(context_rows)+len(style)-len(style_rows)+len(memory)-len(memory_rows)}
     if turn_rows:
         pack['current_turn'] = turn_rows
-    if isinstance(provider_label, str) and provider_label:
-        pack['bot_identity'] = {'current_model_config': normalized(provider_label)[:96]}
+    addressed = (pack['current_message'] or {}).get('addressing', {})
+    targets, basis = addressed.get('targets', []), addressed.get('basis', 'unspecified')
+    # Describe evidence, not a model-inferred subject or a permission to speak.
+    weak = basis.startswith('recent_same_sender_') or basis == 'mention_positions_unknown'
+    pack['interaction'] = {'bot_role': ('possible_addressee' if weak else 'addressee') if 'bot' in targets else
+                           ('other_addressees' if targets else 'not_addressed_explicitly'), 'basis': basis}
+    pack['bot_identity'] = {'speaker': 'bot'}
+    prior = next((r for r in reversed(rows) if r['id'] != (current or {}).get('id')
+                  and not r.get('command') and not reaction_only(r['text'])), None)
+    adjacent_reply = (not targets and current and prior and prior['self']
+                      and prior.get('source') in {'reply','interjection'}
+                      and (prior.get('quote') or {}).get('sender') == current['sender']
+                      and 0 <= current['at']-prior['at'] <= 90
+                      and not TOPIC_CHANGE.search(plain_text(current['text'])))
+    if adjacent_reply:
+        pack['interaction'].update(bot_role='possible_addressee', basis='adjacent_delivered_reply')
+        anchor, _ = quote_source(prior, rows)
+        exchange = [*current_turn(rows, anchor), prior]
+        pack['recent_exchange'] = bounded(
+            [{**render(r), 'text': model_text(r['text'], accounts)[:300]} for r in reversed(exchange)],
+            min(1000, p.pack_chars//3))
+        pack['recent_exchange'].reverse()
+    if isinstance(provider_label, str) and provider_label and ('bot' in targets or adjacent_reply):
+        pack['bot_identity']['backend_model_config'] = normalized(provider_label)[:96]
+        if adjacent_reply:
+            pack['bot_identity']['preceding_reply_ref'] = ids[prior['id']]
+    corrections = [{'reply_ref': item['reply']['ref'], 'kind': item['kind']} for item in feedback
+                   if current and item['reaction']['ref'] == pack['current_message']['ref']]
+    if corrections:
+        pack['interaction']['current_corrections'] = corrections
     visual = [{'source_ref': ids.get(r['id'], 'current'), 'sender': aliases[r['member']], 'at': int(r['at']),
                **{k:v for k,v in note.items() if k != 'digest'}} for r in images for note in window.image_notes.get(r['id'], [])]
     if images:
@@ -504,11 +559,11 @@ def build_pack(window, snapshot, current, *, now, memory_status='none', provider
     # Total budget includes JSON overhead. Drop lowest priority fields first.
     if len(compact(pack)) > p.pack_chars:
         pack['rhythm_stats'] = {}
-    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context', 'visual_context', 'current_turn'):
+    for key in ('style_samples', 'reply_feedback', 'memory_snapshot', 'recent_context', 'member_cards', 'recall_context', 'focus_context', 'visual_context', 'current_turn', 'recent_exchange'):
         if key not in pack:
             continue
         while pack[key] and len(compact(pack)) > p.pack_chars:
-            pack[key].pop(0 if key in {'recent_context','current_turn'} else -1)
+            pack[key].pop(0 if key in {'recent_context','current_turn','recent_exchange'} else -1)
             pack['omitted_count'] += 1
             if key == 'visual_context':
                 pack['visual_context_incomplete'] = True

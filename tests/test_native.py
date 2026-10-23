@@ -622,5 +622,47 @@ class NativeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([],self.calls)
 
 
+@unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires native provider SDK')
+class NativeVisionRequestTests(unittest.IsolatedAsyncioTestCase):
+    async def test_visual_observation_parameters_reach_native_http_request(self):
+        import base64
+        from types import MethodType
+        from openai.resources.chat.completions import AsyncCompletions
+        from openai.types.chat import ChatCompletion
+        from astrbot.core.star.context import Context
+        from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
+        from test_vision import png
+
+        label='test/deepseek-flash'
+        provider=ProviderOpenAIOfficial({'id':label,'model':'deepseek-flash','key':['test-only'],
+            'api_base':'https://example.invalid/v1'}, {})
+        ctx=Mock(spec=Context)
+        ctx.get_config=lambda _: {'provider_settings':{}}
+        ctx.provider_manager=NS(get_provider_by_id=AsyncMock(return_value=provider))
+        ctx.llm_generate=MethodType(Context.llm_generate,ctx)
+        route=route_for(context(),Event())
+        body={'kind':'screenshot','description':'蓝底白字','text':'样本文字','interpretation':'','uncertain':''}
+        result=ChatCompletion(id='test',created=0,model='deepseek-flash',object='chat.completion',
+            choices=[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':json.dumps(body)}}])
+        with tempfile.TemporaryDirectory() as tmp:
+            rt=Runtime(tmp,ctx,{'groups':[{'umo':route.umo,'capture_only':False}]})
+            try:
+                await rt.ensure(route)
+                with patch.object(AsyncCompletions,'create',AsyncMock(return_value=result)) as send:
+                    _,_,observed=await rt.vision.describe(route,'digest','model',(route.key,'digest','model'),
+                        ['data:image/png;base64,'+base64.b64encode(png()).decode()],{},label,lambda:True)
+                self.assertEqual(body,observed)
+                send.assert_awaited_once()
+                wire=send.call_args.kwargs
+                self.assertLess(wire['temperature'],0.5)
+                self.assertEqual({'type':'json_object'},wire['response_format'])
+                self.assertGreater(wire['max_tokens'],1000)
+                self.assertTrue(any(p.get('type')=='image_url' for m in wire['messages']
+                                    if isinstance(m.get('content'),list) for p in m['content']))
+                self.assertNotIn('extra_body',wire.get('extra_body',{}))
+            finally:
+                await rt.close();await provider.terminate()
+
+
 if __name__ == '__main__':
     unittest.main()

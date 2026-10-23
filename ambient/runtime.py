@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from .context import Route, Window, build_pack, compact, event_message, route_for
+from .context import Route, Window, build_pack, compact, event_message, reply_task, route_for
 from .interjection import Interjections
 from .delivery import send_reply_parts
 from .host import canonical_parts, route_send_tool
@@ -266,7 +266,8 @@ class Runtime:
         if pack is None:
             return False
         # Materialize before mutating the host request: fail-open is all-or-nothing.
-        part = part_type(text=compact({'ambient_data': pack})).mark_as_temp()
+        task = reply_task(pack)
+        part = part_type(text=compact({'ambient_data': pack, 'task': task})).mark_as_temp()
         previous = event.get_extra('ambient_dialogue_part')
         parts = canonical_parts([p for p in request.extra_user_content_parts if p is not previous],
                                 pack, event.get_extra('ambient_reply_row'))
@@ -285,7 +286,7 @@ class Runtime:
         request.contexts, request.conversation = [], None
         event.set_extra('ambient_dialogue_part', part)
         event.set_extra('ambient_repair_context', {
-            'system': system, 'prompt': compact({'ambient_data': pack})+'\n'+
+            'system': system, 'prompt': compact({'ambient_data': pack, 'task': task})+'\n'+
                 compact({'native_attachments': [p.text for p in parts[:-1] if getattr(p, 'text', '')]}),
             'image_urls': list(getattr(request, 'image_urls', None) or []),
             'audio_urls': list(getattr(request, 'audio_urls', None) or []),

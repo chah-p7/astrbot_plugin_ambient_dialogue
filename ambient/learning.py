@@ -127,14 +127,16 @@ def plain_text(text):
 
 
 def addressing(row, rows):
+    leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', row['text'])
     if row.get('directed'):
+        if leading and 'bot' in MENTION.findall(leading[0]):
+            return list(dict.fromkeys(MENTION.findall(leading[0]))), 'directed_to_bot'
         return ['bot'], 'directed_to_bot'
     # A person mentioned inside a sentence can be its subject, not its addressee.
-    leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', row['text'])
     if leading:
         return list(dict.fromkeys(MENTION.findall(leading[0]))), 'explicit_mention'
     source, link = quote_source(row, rows)
-    if source:
+    if source and source['sender'] != row['sender']:
         return ['bot' if source['self'] else source['sender']], link
     targets = mentions(row)
     if targets and not MENTION.search(row['text']):
@@ -149,13 +151,15 @@ def addressing(row, rows):
         if targets:
             return targets, 'recent_same_sender_reaction'
     for previous in same_speaker_context(rows, row):
-        if previous.get('directed'):
-            return ['bot'], 'recent_same_sender_directed'
         leading = re.match(r'^(?:\s*<@!?[A-Za-z0-9_-]{1,128}>)+', previous['text'])
+        if previous.get('directed'):
+            if leading and 'bot' in MENTION.findall(leading[0]):
+                return list(dict.fromkeys(MENTION.findall(leading[0]))), 'recent_same_sender_directed'
+            return ['bot'], 'recent_same_sender_directed'
         if leading:
             return list(dict.fromkeys(MENTION.findall(leading[0]))), 'recent_same_sender_mention'
         source, _ = quote_source(previous, rows)
-        if source:
+        if source and source['sender'] != row['sender']:
             return ['bot' if source['self'] else source['sender']], 'recent_same_sender_quote'
     return [], 'unspecified'
 

@@ -73,7 +73,8 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('旁听',prompt['task'])
         self.assertEqual(3,len(prompt['ambient_data']['current_turn']))
         self.assertTrue(prompt['ambient_data']['current_message']['reaction_only'])
-        self.assertEqual({'current_model_config':'ustc/free'},prompt['ambient_data']['bot_identity'])
+        self.assertEqual({'speaker':'bot'},prompt['ambient_data']['bot_identity'])
+        self.assertEqual('not_addressed_explicitly',prompt['ambient_data']['interaction']['bot_role'])
         self.ctx.llm_generate.assert_awaited_once()
 
     async def test_two_paths_read_each_others_confirmed_replies(self):
@@ -84,7 +85,8 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         pack = json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
         self.assertEqual('这把先歇会儿吧。', next(r['text'] for r in pack['focus_context'] if r['speaker']=='bot'))
         self.assertEqual('你刚才说了什么', pack['current_message']['text'])
-        self.assertEqual({'current_model_config':'ustc/free'},pack['bot_identity'])
+        self.assertEqual({'speaker':'bot','backend_model_config':'ustc/free'},pack['bot_identity'])
+        self.assertEqual('addressee',pack['interaction']['bot_role'])
         await self.rt.response(normal, NS(completion_text='我说先休息一下。'))
         await normal.send(NS(chain=[Plain('我说先休息一下。')]))
         await self.interject(Event('现在赢回来了', mid='won'), '那就收工，别把赢的再送回去。')
@@ -94,6 +96,20 @@ class UnifiedTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], req.contexts)
         self.assertIsNone(req.conversation)
         self.assertEqual(3, len(self.sent))
+
+    async def test_current_correction_task_is_shared_with_normal_reply_and_repair(self):
+        from ambient.context import reply_task
+        from test_vision import Reply
+        await self.interject(Event('群里在讨论服务端',mid='initial'),'这句我接错了')
+        correction=directed('没和你说',mid='correction')
+        quote=Reply();quote.id='receipt-1';quote.sender_id=self.route.account;quote.message_str='这句我接错了'
+        correction.message_obj.message.append(quote)
+        req=request();await self.rt.inject(correction,req,Part)
+        data=json.loads(req.extra_user_content_parts[-1].text)
+        self.assertEqual(reply_task(data['ambient_data']),data['task'])
+        self.assertTrue(data['ambient_data']['interaction']['current_corrections'])
+        repair=json.loads(correction.get_extra('ambient_repair_context')['prompt'].split('\n')[0])
+        self.assertEqual(data,repair)
 
     async def test_both_paths_split_and_store_each_real_receipt(self):
         await self.answer(directed(mid='paragraphs'), '先说这一段。\n\n再说另一段。')
