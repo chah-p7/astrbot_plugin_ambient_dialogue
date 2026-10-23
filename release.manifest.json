@@ -130,7 +130,7 @@
     },
     {
       "path": "ambient/vision.py",
-      "sha256": "8d4762434879cdcfd94e47ace4728492151b661ecb94337d0e57da3194846550"
+      "sha256": "ba57d377e22f9c7a0cfc914cc6d8b8382f9a0344ebd3fffaff4691ad6bd6509b"
     },
     {
       "path": "docs/MIGRATION.md",
@@ -194,7 +194,7 @@
     },
     {
       "path": "tests/test_native.py",
-      "sha256": "617227f3ae909d7088b86e6e4d671dbdde6ca3fddecc3c3f73411d1a47ca22f1"
+      "sha256": "0cb6c0e8c7c15a672210e72ff7953cb406f1b741972d4134d7bc85b88f8dba38"
     },
     {
       "path": "tests/test_recall.py",

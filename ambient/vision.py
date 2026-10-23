@@ -1,5 +1,6 @@
 """Read group images into short, source-bound observations, without sending replies."""
 import asyncio
+from copy import copy
 import base64
 import hashlib
 from io import BytesIO
@@ -21,6 +22,31 @@ def failure_reason(exc):
              'image_source_missing', 'vision_provider_missing', 'visual_source_changed',
              'invalid_visual_result', 'empty_visual_result'}
     return str(exc) if isinstance(exc, ValueError) and str(exc) in local else type(exc).__name__
+
+
+async def generate_observation(context, provider_id, **kwargs):
+    method = context.llm_generate
+    manager = getattr(context, 'provider_manager', None)
+    if manager is not None and hasattr(method, '__func__'):
+        from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
+        original = await manager.get_provider_by_id(provider_id)
+        if isinstance(original, ProviderOpenAIOfficial):
+            # Stock AstrBot 4.26.7 ignores generation kwargs but forwards this
+            # provider field. Isolate it per request, including while awaiting.
+            provider = copy(original)
+            extra = original.provider_config.get('custom_extra_body', {})
+            extra = dict(extra) if isinstance(extra, dict) else {}
+            extra.update({key: kwargs[key] for key in ('temperature', 'response_format', 'max_tokens') if key in kwargs})
+            provider.provider_config = {**original.provider_config, 'custom_extra_body': extra}
+            scoped = copy(context)
+            scoped.provider_manager = copy(manager)
+
+            async def lookup(identity):
+                return provider if identity == provider_id else await manager.get_provider_by_id(identity)
+
+            scoped.provider_manager.get_provider_by_id = lookup
+            method = method.__func__.__get__(scoped)
+    return await method(chat_provider_id=provider_id, **kwargs)
 
 
 VISION_RULES = '''你为群聊助手提供图片观察笔记，不直接回复群友。请按证据来源分别记录，只返回一个 JSON 对象；下例仅说明字段结构，不代表图片内容：
@@ -212,10 +238,8 @@ class Vision:
         payload = cached[1] if cached else await asyncio.to_thread(
             self.rt.stores[route.key].cached_image, digest, model, now=now)
         if payload is None:
-            # Use wire fields forwarded by AstrBot; nested extra_body kwargs may
-            # be ignored by the host. Observation needs less sampling variance.
             extra = {'temperature': 0.2, 'response_format': {'type': 'json_object'}} if 'deepseek' in provider.lower() else {}
-            response = await self.rt.context.llm_generate(chat_provider_id=provider, system_prompt=VISION_RULES,
+            response = await generate_observation(self.rt.context, provider, system_prompt=VISION_RULES,
                 prompt='请识别这张图片。附图说明：'+json.dumps(layout,ensure_ascii=False), image_urls=urls, contexts=[], tools=None,
                 max_tokens=1600, request_max_retries=0, fallback_chat_provider_ids=[], **extra)
             payload = {**parse_observation(response.completion_text), **layout}
