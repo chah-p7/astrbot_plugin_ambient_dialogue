@@ -408,6 +408,10 @@ class Store:
         with self.connection() as db:
             return {r[0] for r in db.execute('SELECT bvid FROM video_shares WHERE at>=?', (now-days*86400,))}
 
+    def last_video_at(self):
+        with self.connection() as db:
+            return db.execute('SELECT COALESCE(MAX(at),0) FROM video_shares').fetchone()[0]
+
     def claim_video(self, bvid, days=30, *, now=None):
         """Reserve before send, including uncertain sends; never claim a receipt."""
         now = time.time() if now is None else now

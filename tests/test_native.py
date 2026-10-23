@@ -24,6 +24,41 @@ from test_ambient import Event, context
 
 @unittest.skipUnless(os.environ.get('AMBIENT_NATIVE_TEST'), 'requires installed AstrBot 4.26.7 and native SDK')
 class NativeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_auto_video_from_ordinary_chat_sends_separate_native_caption_and_preview(self):
+        from test_videos import FIRST,raw_video
+        from ambient.videos import video_row,big_image_card
+        self.response = lambda: ({'file_info':'preview-file'} if self.calls[-1]['url'].endswith('/files')
+                                 else {'id':'auto-receipt-'+str(len(self.calls))})
+        self.ctx.llm_generate.return_value=NS(completion_text=json.dumps({
+            'reply':True,'video_id':FIRST,'text':'企鹅开始上班了','reason':'share'}))
+        config={'groups':[{'umo':self.route.umo,'capture_only':False,'interject_enabled':True,
+                          'video_sharing_enabled':True,'video_auto_share_enabled':True,'video_share_format':'image'}],
+                'limits':{'reply_segment_interval_ms':0}}
+        with tempfile.TemporaryDirectory() as tmp:
+            rt=Runtime(tmp,self.ctx,config)
+            try:
+                video=video_row(raw_video())
+                rt.videos.candidates={FIRST:video}
+                rt.videos.fetched_at=datetime.now().timestamp()
+                rt.videos.verify=AsyncMock()
+                rt.videos.card=AsyncMock(return_value={'data':b'preview-jpeg','text':big_image_card(video)['text']})
+                await rt.observe(self.event)
+                await rt.interjections.run(self.route,rt.interjections.states[self.route.key])
+                self.assertEqual(3,len(self.calls))
+                wire=[c['json'] for c in self.calls]
+                self.assertIs(wire[0]['srv_send_msg'],False)
+                self.assertEqual([0,7],[wire[1]['msg_type'],wire[2]['msg_type']])
+                self.assertIn('bilibili.com/video/'+FIRST,wire[1]['content'])
+                self.assertEqual('',wire[2]['content'])
+                self.assertEqual(['m1','m1'],[wire[1]['msg_id'],wire[2]['msg_id']])
+                self.assertNotEqual(wire[1]['msg_seq'],wire[2]['msg_seq'])
+                rows=[r for r in rt.windows[self.route.key].rows if r['self']]
+                self.assertEqual(2,len(rows))
+                self.assertTrue(all(r['quote'] is None and r['source']=='video_share' for r in rows))
+                self.assertEqual(1,rt.videos.auto_states[self.route.key]['confirmed'])
+            finally:
+                await rt.close()
+
     async def test_native_qq_adapter_preserves_card_for_plugin_even_without_text_or_at(self):
         from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import PatchedGroupMessage, QQOfficialPlatformAdapter
         from astrbot.core.platform.astrbot_message import MessageType

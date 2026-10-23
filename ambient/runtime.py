@@ -29,7 +29,7 @@ route_or_settings_changed stale_before_send duplicate_delivery already_attempted
 repair_context_expired_or_changed repair_provider_changed search_context_changed search_incomplete transport_route_expired_or_changed
 qq_native_contract_unavailable qq_reply_anchor_unavailable qq_client_changed
 qq_receipt_unconfirmed qq_reply_slots_exhausted onebot_native_client_unavailable onebot_account_mismatch
-onebot_receipt_unconfirmed video_source_unavailable video_source_changed video_already_shared
+onebot_receipt_unconfirmed video_source_unavailable video_source_changed video_already_shared draft_preempted draft_consumed_or_memory_changed
 video_no_longer_available video_cover_unavailable qq_ark_template_permission_required'''.split())
 
 
@@ -303,6 +303,10 @@ class Runtime:
                'command': False, 'attachment': '[表情包：' in text, 'mentions': [], 'directed': False,
                'source': source, 'quote': {'id': current['id'], 'sender': current['sender'],
                                           'text': current['text'][:240]}}
+        if source == 'video_share':
+            # QQ needs a transport anchor; it does not make a group-wide share
+            # a reply to, or a shared experience with, that particular member.
+            row['quote'] = None
         await self.record(route, row)
 
     def install_sender(self, event, route):

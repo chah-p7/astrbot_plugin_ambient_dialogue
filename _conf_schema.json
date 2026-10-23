@@ -441,6 +441,18 @@
             "description": "相似视频发现入口（BV 号，最多 3 个）",
             "default": [],
             "hint": "从这些公开视频发现相关候选，适合没有历史样本时启动；仍须按关键词、时长、日期和现场话题选材。"
+          },
+          "video_auto_share_enabled": {
+            "type": "bool",
+            "description": "在合适的群聊时机自动搬史",
+            "default": false,
+            "hint": "启用自然插话后生效。复用最新真人消息与同一次模型请求，明确安排选片配文；QQ 官方仍需有效消息回复窗口。"
+          },
+          "video_auto_share_interval_seconds": {
+            "type": "int",
+            "description": "自动视频分享最短间隔（秒，0 不额外间隔）",
+            "default": 1800,
+            "hint": "真人新分享和已尝试发送的视频也计入间隔；暂缓后最多每 5 分钟再次安排自动选片。不会限制普通聊天消息次数。"
           }
         }
       }

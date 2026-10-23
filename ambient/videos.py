@@ -27,6 +27,21 @@ VIDEO_RULE += ('筛选线索 selection 只代表标题或封面有怎样的梗�
                '主动搬史优先反差、鬼畜、二创、荒诞混搭等具体梗点，普通预告和资讯不因为热门就硬推。'
                '有人明确要某类视频时按其需求选择；没有合适的就不发。')
 
+AUTO_VIDEO_RULE = ('\n本轮是管理员开启的自动搬史机会。结合同一份群聊上下文判断现场：'
+    '日常闲聊、轻松吐槽或话题间歇时，主动从 video_candidates 选一个视频，优先 requested_keywords，写一句自然短配文。'
+    '可以主动带来新话题，不必等有人索要视频，也不必硬把视频和上一句话联系起来。'
+    '正在认真答疑、处理事情、表达困扰、明确拒绝分享或进行不宜打断的对话时暂缓；候选都不合适也暂缓。'
+    '主动分享面向全群，配文围绕视频本身的梗点，不必点评上一位发言者；不要劝群友放弃手头的事情，也不要借旧话题挤兑人。'
+    '配文只依照标题、简介、封面线索，不说自己看过、不编剧情。'
+    '本轮用 video_id 字段选片，text 只写配文，不写 [[bilibili:...]] 标记或表情标记。'
+    '仅返回 JSON {"reply":true或false,"video_id":"本轮候选BV号，暂缓则空串",'
+    '"text":"一句短配文，暂缓则空串","reason":"share/busy_topic/declined/no_fit"}。')
+
+AUTO_VIDEO_TASK = ('这是自动搬史决策请求，不是给 current_message 写普通回复。'
+    '请根据 ambient_data 判断此刻适不适合向全群分享，并按系统要求返回一个 JSON 对象。'
+    '无论分享还是暂缓，都必须包含 reply、video_id、text、reason 四个字段；'
+    '暂缓时 reply=false、video_id 和 text 为空。不要输出 JSON 以外的文字。')
+
 
 def bounded(options, key, default, low, high):
     value = options.get(key, default)
@@ -91,6 +106,38 @@ class Videos:
         self.task = None
         self.outcome = 'disabled'
         self.selection = VideoSelection(self)
+        self.auto_states = {}
+
+    def auto_enabled(self, route):
+        return (self.enabled(route) and self.rt.enabled(route,interject=True)
+                and self.rt.settings(route).get('video_auto_share_enabled') is True)
+
+    def auto_opportunity(self, route, current, offered, *, now=None):
+        now = time.time() if now is None else now
+        if not self.auto_enabled(route):
+            return False
+        state = self.auto_states.setdefault(route.key,{'checks':0,'selected':0,'confirmed':0,'failed':0})
+        if (current.get('self') or current.get('bot_sender') or current.get('command') or current.get('directed')
+                or current['sender'] in self.rt.windows[route.key].style_excluded_senders):
+            return False
+        interval = bounded(self.rt.settings(route),'video_auto_share_interval_seconds',1800,0,86400)
+        next_at = max(state.get('next_check',0),self.rt.stores[route.key].last_video_at()+interval)
+        if now < next_at:
+            state['next_check'] = next_at
+            return False
+        if not offered:
+            state['outcome'] = 'no_candidates'
+            return False
+        state.update(outcome='deciding',at=now,offered=len(offered),next_check=now+min(interval,300))
+        state['checks'] += 1
+        return True
+
+    def auto_result(self, route, outcome):
+        state = self.auto_states.setdefault(route.key,{'checks':0,'selected':0,'confirmed':0,'failed':0})
+        state.pop('reason',None)
+        state.update(outcome=outcome,at=time.time())
+        if outcome in {'selected','confirmed','failed'}:
+            state[outcome] += 1
 
     def pool(self, route):
         extra = self.selection.extra.get(route.key, {}) if self.enabled(route) else {}
@@ -259,7 +306,9 @@ class Videos:
 
     def status(self):
         return {'outcome': self.outcome, 'candidates': len(self.candidates), 'fetched_at': self.fetched_at,
-                'selection': {stable_id(k)[:12]:v for k,v in self.selection.states.items()}}
+                'selection': {stable_id(k)[:12]:v for k,v in self.selection.states.items()},
+                'auto_sharing': {stable_id(r.key)[:12]:self.auto_states.get(r.key,{'outcome':'waiting_for_message'})
+                                 for r in self.rt.routes.values() if self.auto_enabled(r)}}
 
     async def close(self):
         if self.task:

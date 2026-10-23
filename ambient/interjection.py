@@ -13,7 +13,7 @@ from .stickers import STICKER_RULE, parse_sticker
 from .learning import addressing
 from .aliases import name_targets
 from .search import generate, settings_id
-from .videos import VIDEO_RULE, parse_video, share_text
+from .videos import AUTO_VIDEO_RULE, AUTO_VIDEO_TASK, VIDEO_RULE, parse_video, share_text
 
 
 @dataclass
@@ -106,7 +106,7 @@ class Interjections:
         generation, event, current = state.generation, state.event, state.current
         rt, p = self.runtime, self.runtime.policy(route)
         settings = stable_id(rt.config)
-        confirmed_parts = 0
+        confirmed_parts, auto_video, video = 0, False, None
         try:
             search_settings = settings_id(rt.context, event)
             transport = Transport(rt.context, event, route)
@@ -131,6 +131,7 @@ class Interjections:
             pack = build_pack(window, snap, current, now=time.time())
             offered_stickers = rt.stickers.add_choices(route, pack)
             offered_videos = rt.videos.add_choices(route, pack)
+            auto_video = rt.videos.auto_opportunity(route,current,offered_videos)
 
             async def draft_guard():
                 _, _, current_identity = await self.identity(route, event)
@@ -144,13 +145,14 @@ class Interjections:
 
             state.checks += 1
             response = await asyncio.wait_for(generate(rt.context, event,
-                chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+(STICKER_RULE if offered_stickers else '')+
+                chat_provider_id=provider, system_prompt=persona+'\n'+SYSTEM_RULES+(STICKER_RULE if offered_stickers and not auto_video else '')+
                 (VIDEO_RULE if offered_videos else '')+
+                (AUTO_VIDEO_RULE if auto_video else
                 '\n你正在判断是否自然接入群聊。结合接话对象和近期反馈，只有读懂原意且有自然的接法才说；普通确认、办事问答和对别人的邀约可以安静旁听。'
                 '当前图片附有明确看图问题且没有指向其他成员时，优先结合 visual_context 回答；纯图片分享或表情不必每张点评。'
                 '收到明确拒绝插话，先退出这段对话，等明显换题或有人重新向你搭话。不要代被点名的人回答，不把每句话都加工成比喻或段子。'
-                '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。',
-                prompt=compact({'ambient_data': pack}), guard=draft_guard,
+                '仅返回 JSON {"reply":true或false,"text":"一句自然回复"}，不提及判断过程。'),
+                prompt=compact({'ambient_data': pack, **({'task':AUTO_VIDEO_TASK} if auto_video else {})}), guard=draft_guard,
                 expected_settings=search_settings, max_tokens=600), p.interject_timeout_seconds)
             raw = str(getattr(response, 'completion_text', '')).strip()
             if raw.startswith('```') and raw.endswith('```'):
@@ -158,10 +160,17 @@ class Interjections:
             decision = json.loads(raw)
             if not isinstance(decision, dict) or decision.get('reply') is not True:
                 state.outcome = 'silent'
+                if auto_video:
+                    reason = decision.get('reason') if isinstance(decision,dict) else ''
+                    rt.videos.auto_result(route,reason if reason in {'busy_topic','declined','no_fit'} else 'model_deferred')
                 return
             text = decision.get('text', '').strip() if isinstance(decision.get('text'), str) else ''
             text, selected_video = parse_video(text, offered_videos)
+            if auto_video and isinstance(decision.get('video_id'),str) and decision['video_id'] in offered_videos:
+                selected_video = decision['video_id']
             video = rt.videos.selected(route, selected_video, offered_videos)
+            if auto_video:
+                rt.videos.auto_result(route,'selected' if video else 'no_video_selected')
             if selected_video and not video:
                 raise ValueError('video_no_longer_available')
             text, selected = parse_sticker(text, offered_stickers)
@@ -172,6 +181,8 @@ class Interjections:
             rejection = reply_rejection(text, current, window, interject=True) if text or not sticker else ''
             if rejection or len(text) > p.interject_max_chars or text.startswith('/'):
                 state.outcome = rejection or 'invalid_draft'
+                if auto_video:
+                    rt.videos.auto_result(route,state.outcome)
                 return
             card = None
             if video:
@@ -205,7 +216,7 @@ class Interjections:
 
             async def record_part(part, receipt):
                 nonlocal confirmed_parts
-                await rt.confirmed(route, current, part, receipt, 'interjection')
+                await rt.confirmed(route, current, part, receipt, 'video_share' if auto_video and video else 'interjection')
                 own_receipts.add(receipt)
                 confirmed_parts += 1
                 state.sent += 1
@@ -216,19 +227,25 @@ class Interjections:
                     sticker=sticker, card=card,
                     max_parts=store.remaining_qq_parts(current['id']) if route.adapter == 'qq_official' else None)
             state.outcome = 'confirmed'
-            rt.delivery_audit(route, current, 'interjection', confirmed_parts)
+            if auto_video and video:
+                rt.videos.auto_result(route,'confirmed')
+            rt.delivery_audit(route, current, 'video_share' if auto_video and video else 'interjection', confirmed_parts)
             state.suppressed_until = time.time()+p.interject_cooldown_seconds
         except asyncio.CancelledError:
             state.outcome = 'cancelled_no_retry'
             raise
         except Exception as exc:
             # Never log raw chats, drafts, tokens or adapter exception bodies.
-            state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else type(exc).__name__
+            from .runtime import error_code
+            state.outcome = ('partial_no_retry' if confirmed_parts else 'uncertain_no_retry') if state.outcome == 'sending' else error_code(exc)
+            if auto_video:
+                rt.videos.auto_result(route,'failed')
+                rt.videos.auto_states[route.key]['reason'] = state.outcome
             rt.errors += 1
         finally:
             # A real reply is interaction; merely considering/observing a
             # message is not. Do this after all parts, including partial sends.
-            if confirmed_parts:
+            if confirmed_parts and not (auto_video and video):
                 try:
                     await asyncio.to_thread(store.identify, route.platform, current['sender'], current['name'], now=current['at'])
                 except Exception:
