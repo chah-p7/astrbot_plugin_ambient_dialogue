@@ -7,11 +7,14 @@ from io import BytesIO
 import json
 import re
 import time
+from urllib.parse import urlparse
 
 from .context import visual_rows
 from .policy import stable_id
 from .learning import plain_text
 from .stickers import MAX_DOWNLOAD, MAX_PIXELS, fetch_image, image_sources
+
+MAX_BUFFERED_IMAGES = 32 * 1024 * 1024
 
 
 def failure_reason(exc):
@@ -20,7 +23,7 @@ def failure_reason(exc):
              'image_local_source_unavailable', 'image_file_missing', 'image_url_not_allowed',
              'image_host_not_allowed', 'image_private_address', 'image_download_unavailable',
              'image_source_missing', 'vision_provider_missing', 'visual_source_changed',
-             'invalid_visual_result', 'empty_visual_result'}
+             'invalid_visual_result', 'empty_visual_result', 'image_buffer_full'}
     return str(exc) if isinstance(exc, ValueError) and str(exc) in local else type(exc).__name__
 
 
@@ -131,6 +134,9 @@ class Vision:
         self.tasks, self.cache, self.statuses, self.decode_locks = {}, {}, {}, {}
         self.decode_users = {}
         self.semaphore = asyncio.Semaphore(2)
+        self.capture_lock = asyncio.Lock()
+        self.capturing = set()
+        self.buffered_bytes = 0
 
     def enabled(self, route):
         return self.rt.owns(route) and self.rt.settings(route).get('vision_enabled', False) is True
@@ -149,7 +155,7 @@ class Vision:
                 and row['sender'] not in window.style_excluded_senders
                 and any(r['id'] == row['id'] and r['member'] == row['member'] for r in window.rows))
 
-    def observe(self, route, event, row):
+    async def observe(self, route, event, row):
         if (not self.enabled(route) or not row.get('image_count') or row['self'] or row['command']
                 or row['sender'] in self.rt.windows[route.key].style_excluded_senders):
             return
@@ -163,14 +169,59 @@ class Vision:
         window.image_notes[row['id']] = [{'number': i+1, 'state': 'pending' if i < min(limit,len(sources)) and sources[i] else 'unavailable',
                                          **({'reason': 'image_limit_or_source_missing'} if i >= min(limit,len(sources)) or not sources[i] else {})}
                                         for i in range(row['image_count'])]
-        if len(self.tasks) >= 32:
+        if len(self.tasks)+len(self.capturing) >= 32:
             for item in window.image_notes[row['id']]:
                 item.update(state='unavailable', reason='queue_full')
             self.statuses[route.key] = {'outcome': 'queue_full'}
             return
-        task = asyncio.create_task(self.run(route, row, sources[:limit]))
-        self.tasks[key] = task
-        task.add_done_callback(lambda _, key=key: self.tasks.pop(key, None))
+        # Native preprocessing replaces remote URLs with event-owned temp files.
+        # Capture bounded local bytes before returning to that event's cleanup;
+        # downloading remote URLs and all model work stay in the background.
+        retained = 0
+        started = False
+        signature = self.signature(route)
+        self.capturing.add(key)
+        sources = sources[:limit]
+        try:
+            async with self.capture_lock:
+                for i,source in enumerate(sources):
+                    if not source or urlparse(source).scheme not in {'','file'}:
+                        continue
+                    try:
+                        if self.buffered_bytes >= MAX_BUFFERED_IMAGES:
+                            raise ValueError('image_buffer_full')
+                        data = await fetch_image(source,self.rt.stickers.local_roots())
+                        if not self.valid(route,row,signature):
+                            return
+                        if len(data)+self.buffered_bytes > MAX_BUFFERED_IMAGES:
+                            raise ValueError('image_buffer_full')
+                        sources[i] = data
+                        retained += len(data)
+                        self.buffered_bytes += len(data)
+                    except Exception as exc:
+                        reason = failure_reason(exc)
+                        sources[i] = None
+                        notes = window.image_notes.get(row['id'],[])
+                        if i < len(notes):
+                            notes[i].update(state='unavailable',reason=reason)
+                        self.statuses[route.key] = {'outcome':'unavailable','reason':reason}
+            if self.rt.closed:
+                return
+            task = asyncio.create_task(self.run(route, row, sources))
+            self.tasks[key] = task
+            started = True
+            def finished(_task, key=key, size=retained):
+                self.tasks.pop(key,None)
+                self.buffered_bytes -= size
+            task.add_done_callback(finished)
+            retained = 0  # The task now owns release, including cancellation before start.
+        finally:
+            self.capturing.discard(key)
+            self.buffered_bytes -= retained
+            if not started:
+                for note in window.image_notes.get(row['id'],[]):
+                    if note['state']=='pending':
+                        note.update(state='unavailable',reason='source_or_settings_changed')
 
     def pending(self, route, current):
         if not self.enabled(route):
@@ -200,18 +251,30 @@ class Vision:
             return 'repeated_image'
         return ''
 
-    async def wait(self, route, current):
+    async def wait(self, route, current, *, foreground=False):
         if not self.enabled(route):
             return
         window = self.rt.windows[route.key]
-        tasks = [self.tasks[(route.key, r['id'])] for r in visual_rows(list(window.rows), current)
+        rows = visual_rows(list(window.rows), current)
+        tasks = [self.tasks[(route.key, r['id'])] for r in rows
                  if (route.key, r['id']) in self.tasks]
         if tasks:
+            p = self.rt.policy(route)
+            timeout = p.vision_wait_seconds
+            if foreground:
+                # A follow-up may have no native attachment to fall back to.
+                # Give its shared reads their processing budget, plus bounded
+                # queue time, without outliving the ordinary reply deadline.
+                pending = sum(n['state'] == 'pending' for r in rows
+                              for n in window.image_notes.get(r['id'], []))
+                remaining = max(0, p.reply_fresh_seconds - (time.time()-current['at']))
+                timeout = min(remaining, timeout + max(timeout, pending*p.vision_timeout_seconds))
             # A foreground timeout does not cancel the shared background work.
-            await asyncio.wait(tasks, timeout=self.rt.policy(route).vision_wait_seconds)
+            await asyncio.wait(tasks, timeout=timeout)
 
     async def read(self, route, source, provider, check=lambda: True):
-        data = await fetch_image(source, self.rt.stickers.local_roots() if not source.startswith(('https:', 'data:')) else ())
+        data = source if isinstance(source,bytes) else await fetch_image(
+            source, self.rt.stickers.local_roots() if not source.startswith(('https:', 'data:')) else ())
         digest, urls, layout = await asyncio.to_thread(prepare_image, data)
         model = stable_id(provider, 'vision-v4')
         if layout['low_resolution']:
@@ -267,6 +330,13 @@ class Vision:
         for i, source in enumerate(sources):
             if not self.valid(route, row, signature):
                 break
+            note = self.rt.windows[route.key].image_notes[row['id']][i]
+            if note['state'] != 'pending':
+                # Preserve capture-time errors rather than replacing them with
+                # image_source_missing, and retain the usual diagnostic history.
+                await asyncio.to_thread(self.rt.stores[route.key].save_image,row,i+1,note['state'],
+                    {'reason':note.get('reason','image_source_missing')},'','',now=time.time())
+                continue
             state, payload, digest, model = 'unavailable', {}, '', ''
             try:
                 if not source:

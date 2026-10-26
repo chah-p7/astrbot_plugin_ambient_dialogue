@@ -18,7 +18,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "e59b2538ccf388c470bc3cfb5010aa5f3fcae7e77f0ecb14e2f77b6cf3ce21c0"
+      "sha256": "5fcee8f561b97eb448c3465df0f4f3c67c64d1cf4373207790f588646fe78ab1"
     },
     {
       "path": "_conf_schema.json",
@@ -70,7 +70,7 @@
     },
     {
       "path": "ambient/policy.py",
-      "sha256": "5bb7b32818cbd3a68eed4871913b595f7162b77633e88d0b5ebc11d8b26249d1"
+      "sha256": "df072c99e31f80c876e898418f38b6fec98a2437b2489560b06c63c47c17ee0f"
     },
     {
       "path": "ambient/recall.py",
@@ -78,7 +78,7 @@
     },
     {
       "path": "ambient/runtime.py",
-      "sha256": "12b869d8c973c8afd2391ee8f856ffd331fce5223219c731b7708e26b3c20a06"
+      "sha256": "435f7684f441a304b69958e52b496a0808a8ab9d1b683ca889639c1019977877"
     },
     {
       "path": "ambient/search.py",
@@ -130,7 +130,7 @@
     },
     {
       "path": "ambient/vision.py",
-      "sha256": "ba57d377e22f9c7a0cfc914cc6d8b8382f9a0344ebd3fffaff4691ad6bd6509b"
+      "sha256": "c581a70967ad3507de98b081d3522b5f3767edfd82c020b4f464a480770bef90"
     },
     {
       "path": "docs/MIGRATION.md",
@@ -150,7 +150,7 @@
     },
     {
       "path": "metadata.yaml",
-      "sha256": "aaf2972b711b12098cc87055f85edb9d890e1078cdc0e1610ee063c667916725"
+      "sha256": "ad816a0bc03eb2bffa72f8859a9e9b46ff04bf809cb4fffde3ad295b3cefcd91"
     },
     {
       "path": "pages/stickers/app.js",
@@ -187,6 +187,10 @@
     {
       "path": "tests/test_identity.py",
       "sha256": "284f6d14084977e107bc1855b93b83b465f17798a0e07d0bd5c371f5ebdc8dcb"
+    },
+    {
+      "path": "tests/test_image_lifetime.py",
+      "sha256": "0866d4fc13d83c27dca998aa739a7c10bfb33e0035d6000cd7a3e9570bbcdbdc"
     },
     {
       "path": "tests/test_learning.py",
@@ -242,7 +246,7 @@
     },
     {
       "path": "tests/test_vision.py",
-      "sha256": "b50ba47d0353a87a80a2468768029225356fbe7dbb782219289b155b04c84133"
+      "sha256": "c8220125e6488565bc568decea3ee560e99272aec50789e870c4c3bd23e28351"
     },
     {
       "path": "tools/build_schema.py",

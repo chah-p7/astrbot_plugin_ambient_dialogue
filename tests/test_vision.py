@@ -128,6 +128,20 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(pack['current_speaker'],pack['visual_context'][0]['sender'])
         self.ctx.llm_generate.assert_awaited_once()
 
+    async def test_direct_wait_respects_reply_deadline_without_cancelling_reader(self):
+        started,release=asyncio.Event(),asyncio.Event()
+        async def read(**kw):
+            started.set();await release.wait();return NS(completion_text=self.result)
+        self.ctx.llm_generate.side_effect=read
+        await self.rt.observe(self.event());await started.wait()
+        row=self.rt.interjections.states[self.route.key].current
+        row['at']=time.time()-self.rt.policy(self.route).reply_fresh_seconds+.05
+        await asyncio.wait_for(self.rt.vision.wait(self.route,row,foreground=True),.5)
+        self.assertTrue(self.rt.vision.pending(self.route,row))
+        self.assertFalse(next(iter(self.rt.vision.tasks.values())).cancelled())
+        release.set();await self.complete()
+        self.assertTrue(self.rt.vision.ready(self.route,row))
+
     async def test_ambiguous_other_people_images_and_topic_change_do_not_choose_last_image(self):
         await self.rt.observe(self.event('a','A'));await self.complete()
         await self.rt.observe(self.event('b','B'));await self.complete()
@@ -222,6 +236,28 @@ class VisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.rt.vision.pending(self.route,row))
         self.assertFalse(next(iter(self.rt.vision.tasks.values())).cancelled())
         release.set();await self.complete();self.assertTrue(self.rt.vision.ready(self.route,row))
+
+    async def test_direct_followup_waits_for_image_instead_of_injecting_pending(self):
+        self.config['limits']['vision_wait_seconds']=1
+        started,release=asyncio.Event(),asyncio.Event()
+        async def read(**kw):
+            started.set();await release.wait();return NS(completion_text=self.result)
+        self.ctx.llm_generate.side_effect=read
+        await self.rt.observe(self.event());await started.wait()
+        follow=Event('这张图写了什么',mid='ask',sender='A')
+        follow.is_at_or_wake_command=True
+        req=request()
+        waiting=asyncio.create_task(self.rt.inject(follow,req,Part))
+        try:
+            await asyncio.sleep(1.15)
+            self.assertFalse(waiting.done(), 'A direct image question must not race the shared visual read')
+        finally:
+            release.set()
+            await waiting
+        pack=json.loads(req.extra_user_content_parts[-1].text)['ambient_data']
+        self.assertEqual('ready',pack['visual_context'][0]['state'])
+        self.assertEqual('怎么又这样',pack['visual_context'][0]['text'])
+        self.ctx.llm_generate.assert_awaited_once()
 
     async def test_disabling_group_during_read_rejects_late_result(self):
         started,release=asyncio.Event(),asyncio.Event()

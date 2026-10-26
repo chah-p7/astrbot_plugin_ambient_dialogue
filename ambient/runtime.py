@@ -207,7 +207,7 @@ class Runtime:
                                         excluded=window.style_excluded_senders)
                 window.identity_snapshot = await asyncio.to_thread(store.snapshot)
             self.stickers.observe(route, event, row)
-            self.vision.observe(route, event, row)
+            await self.vision.observe(route, event, row)
             self.interjections.observe(route, event, row, now=time.time())
 
     async def prepare(self, event):
@@ -250,8 +250,8 @@ class Runtime:
             await asyncio.to_thread(store.learning.learn, [row], cases=False, excluded=window.style_excluded_senders)
         snap = await asyncio.to_thread(store.snapshot)
         window.identity_snapshot = snap
-        self.vision.observe(route, event, row)
-        await self.vision.wait(route, row)
+        await self.vision.observe(route, event, row)
+        await self.vision.wait(route, row, foreground=True)
         if self.closed or not self.owns(route) or not any(r['id'] == row['id'] for r in window.rows):
             self.block(event, route, row, 'route_or_settings_changed')
             return None
